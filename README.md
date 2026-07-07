@@ -16,7 +16,7 @@ export OPENAI_API_KEY="..."
 ## Run
 
 ```bash
-python3 -m ficc_bbg_parser.cli /path/to/pasted-text.txt --source-date 2026-06-04 --out-dir output
+python -m ficc_bbg_parser.cli /path/to/pasted-text.txt --source-date 2026-06-04 --out-dir output
 ```
 
 Outputs:
@@ -30,7 +30,7 @@ Outputs:
 Run only the Bloomberg message splitter:
 
 ```bash
-python3 -m ficc_bbg_parser.cli tests/email_text.txt --stage split --source-date 2026-06-04 --out-dir output
+python -m ficc_bbg_parser.cli tests/email_text.txt --stage split --source-date 2026-06-04 --out-dir output
 ```
 
 This writes `output/messages.json` and does not call the LLM.
@@ -38,7 +38,7 @@ This writes `output/messages.json` and does not call the LLM.
 Run only LLM extraction from a previously generated messages file:
 
 ```bash
-python3 -m ficc_bbg_parser.cli --stage extract --messages-input output/messages.json --out-dir output --batch-size 4
+python -m ficc_bbg_parser.cli --stage extract --messages-input output/messages.json --out-dir output --batch-size 4
 ```
 
 The extractor shows batch progress by default. Disable it with `--no-progress`.
