@@ -25,6 +25,31 @@ Outputs:
 - `output/quotes.xlsx`
 - `output/messages.json`
 
+## Step-by-step Debugging
+
+Run only the Bloomberg message splitter:
+
+```bash
+python3 -m ficc_bbg_parser.cli tests/email_text.txt --stage split --source-date 2026-06-04 --out-dir output
+```
+
+This writes `output/messages.json` and does not call the LLM.
+
+Run only LLM extraction from a previously generated messages file:
+
+```bash
+python3 -m ficc_bbg_parser.cli --stage extract --messages-input output/messages.json --out-dir output --batch-size 4
+```
+
+The extractor shows batch progress by default. Disable it with `--no-progress`.
+
+Useful tuning flags:
+
+- `--batch-size`: number of split messages per LLM call
+- `--model`: extraction model
+- `--base-url`: OpenAI-compatible API base URL
+- `--max-retries`: retries per LLM batch
+
 ## Parsing Layers
 
 1. Split Bloomberg chat text into timestamped message blocks.

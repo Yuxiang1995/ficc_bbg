@@ -30,6 +30,20 @@ def write_messages_json(messages: Iterable[MessageBlock], output_path: Path) -> 
     output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def read_messages_json(input_path: Path) -> List[MessageBlock]:
+    payload = json.loads(input_path.read_text(encoding="utf-8"))
+    return [
+        MessageBlock(
+            message_id=item["message_id"],
+            message_time=item["message_time"],
+            speaker=item["speaker"],
+            text=item["text"],
+            source_date=item.get("source_date"),
+        )
+        for item in payload
+    ]
+
+
 def write_quotes_xlsx(records: List[QuoteRecord], output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 

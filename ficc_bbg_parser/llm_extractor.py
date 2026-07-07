@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 import time
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -10,10 +11,7 @@ from .normalization import extract_title
 
 
 DEFAULT_MODEL = "qwen3.7-plus"
-CLIENT = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY"),
-    base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-)
+DEFAULT_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 
 
 QUOTE_SCHEMA: Dict[str, Any] = {
@@ -115,19 +113,38 @@ class OpenAIQuoteExtractor:
         model: Optional[str] = None,
         batch_size: int = 8,
         max_retries: int = 2,
+        show_progress: bool = True,
+        base_url: Optional[str] = None,
         client: Optional[OpenAI] = None,
     ) -> None:
         self.model = model or os.getenv("OPENAI_MODEL") or DEFAULT_MODEL
         self.batch_size = batch_size
         self.max_retries = max_retries
-        self.client = client or OpenAI()
+        self.show_progress = show_progress
+        self.client = client or OpenAI(
+            api_key=os.getenv("OPENAI_API_KEY"),
+            base_url=base_url or os.getenv("OPENAI_BASE_URL") or DEFAULT_BASE_URL,
+        )
 
     def extract(self, messages: List[MessageBlock]) -> List[QuoteRecord]:
         records: List[QuoteRecord] = []
-        for batch in _chunks(messages, self.batch_size):
+        batches = list(_chunks(messages, self.batch_size))
+
+        for batch_index, batch in _progress_batches(batches, self.show_progress):
+            started_at = time.time()
             payload = [_message_payload(message) for message in batch]
             response = self._call_model(payload)
-            records.extend(_records_from_payload(response, batch))
+            batch_records = _records_from_payload(response, batch)
+            records.extend(batch_records)
+            _report_batch_done(
+                batch_index=batch_index,
+                total_batches=len(batches),
+                batch_size=len(batch),
+                batch_records=len(batch_records),
+                total_records=len(records),
+                elapsed_seconds=time.time() - started_at,
+                enabled=self.show_progress,
+            )
         return records
 
     def _call_model(self, payload: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -144,6 +161,7 @@ class OpenAIQuoteExtractor:
                     ],
                     response_format={"type": "json_schema", "json_schema": QUOTE_SCHEMA},
                     temperature=0,
+                    timeout=30,
                 )
                 content = completion.choices[0].message.content
                 if content is None:
@@ -207,3 +225,40 @@ def _default_quote_source(message: MessageBlock) -> str:
 def _chunks(values: List[MessageBlock], size: int) -> Iterable[List[MessageBlock]]:
     for start in range(0, len(values), size):
         yield values[start : start + size]
+
+
+def _progress_batches(batches: List[List[MessageBlock]], enabled: bool):
+    if not enabled:
+        return enumerate(batches, start=1)
+
+    try:
+        from tqdm import tqdm
+    except ImportError:
+        return enumerate(batches, start=1)
+
+    return enumerate(tqdm(batches, desc="LLM extract", unit="batch"), start=1)
+
+
+def _report_batch_done(
+    batch_index: int,
+    total_batches: int,
+    batch_size: int,
+    batch_records: int,
+    total_records: int,
+    elapsed_seconds: float,
+    enabled: bool,
+) -> None:
+    if not enabled:
+        return
+
+    # tqdm gives the visual progress bar. This fallback keeps useful progress visible
+    # when tqdm is not installed, and also leaves a compact per-batch timing trace.
+    print(
+        "batch "
+        f"{batch_index}/{total_batches}: "
+        f"messages={batch_size}, "
+        f"quotes={batch_records}, "
+        f"total_quotes={total_records}, "
+        f"elapsed={elapsed_seconds:.1f}s",
+        file=sys.stderr,
+    )
