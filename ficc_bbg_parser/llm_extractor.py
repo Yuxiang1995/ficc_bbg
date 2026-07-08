@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, Iterable, List, Optional
 
 import httpx
@@ -78,14 +79,16 @@ class OpenAIQuoteExtractor:
         self,
         model: Optional[str] = None,
         batch_size: int = 8,
+        max_workers: int = 1,
         max_retries: int = 1,
         request_timeout: float = 30,
         show_progress: bool = True,
         base_url: Optional[str] = None,
         client: Optional[OpenAI] = None,
-    ) -> None:
+        ) -> None:
         self.model = model or os.getenv("OPENAI_MODEL") or MID_MODEL
         self.batch_size = batch_size
+        self.max_workers = max_workers
         self.max_retries = max_retries
         self.request_timeout = request_timeout
         self.show_progress = show_progress
@@ -97,13 +100,17 @@ class OpenAIQuoteExtractor:
         )
 
     def extract(self, quote_lines: List[QuoteLine]) -> List[QuoteRecord]:
-        records: List[QuoteRecord] = []
         batches = list(_chunks(quote_lines, self.batch_size))
+        if self.max_workers <= 1 or len(batches) <= 1:
+            return self._extract_sequential(batches)
 
+        return self._extract_parallel(batches)
+
+    def _extract_sequential(self, batches: List[List[QuoteLine]]) -> List[QuoteRecord]:
+        records: List[QuoteRecord] = []
         for batch_index, batch in _progress_batches(batches, self.show_progress):
             started_at = time.time()
-            response = self._call_model(batch)
-            batch_records = _records_from_payload(response, batch)
+            batch_records = self._extract_batch(batch)
             records.extend(batch_records)
             _report_batch_done(
                 batch_index=batch_index,
@@ -115,6 +122,43 @@ class OpenAIQuoteExtractor:
                 enabled=self.show_progress,
             )
         return records
+
+    def _extract_parallel(self, batches: List[List[QuoteLine]]) -> List[QuoteRecord]:
+        results: Dict[int, List[QuoteRecord]] = {}
+        max_workers = min(self.max_workers, len(batches))
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_index = {
+                executor.submit(self._timed_extract_batch, batch): index
+                for index, batch in enumerate(batches, start=1)
+            }
+
+            for future in _progress_futures(future_to_index, self.show_progress):
+                batch_index = future_to_index[future]
+                batch_records, elapsed_seconds = future.result()
+                results[batch_index] = batch_records
+                _report_batch_done(
+                    batch_index=batch_index,
+                    total_batches=len(batches),
+                    batch_size=len(batches[batch_index - 1]),
+                    batch_records=len(batch_records),
+                    total_records=sum(len(records) for records in results.values()),
+                    elapsed_seconds=elapsed_seconds,
+                    enabled=self.show_progress,
+                )
+
+        ordered_records: List[QuoteRecord] = []
+        for batch_index in sorted(results):
+            ordered_records.extend(results[batch_index])
+        return ordered_records
+
+    def _timed_extract_batch(self, batch: List[QuoteLine]):
+        started_at = time.time()
+        return self._extract_batch(batch), time.time() - started_at
+
+    def _extract_batch(self, batch: List[QuoteLine]) -> List[QuoteRecord]:
+        response = self._call_model(batch)
+        return _records_from_payload(response, batch)
 
     def _call_model(self, quote_lines: List[QuoteLine]) -> Dict[str, Any]:
         user_content = "\n".join(line.text for line in quote_lines)
@@ -148,7 +192,7 @@ class OpenAIQuoteExtractor:
                 last_error = exc
                 if attempt >= self.max_retries:
                     break
-                # time.sleep(2**attempt)
+                time.sleep(min(2**attempt, 8))
 
         raise RuntimeError(f"OpenAI quote extraction failed: {last_error}") from last_error
 
@@ -218,6 +262,19 @@ def _progress_batches(batches: List[List[QuoteLine]], enabled: bool):
         return enumerate(batches, start=1)
 
     return enumerate(tqdm(batches, desc="LLM extract", unit="batch"), start=1)
+
+
+def _progress_futures(future_to_index, enabled: bool):
+    futures = as_completed(future_to_index)
+    if not enabled:
+        return futures
+
+    try:
+        from tqdm import tqdm
+    except ImportError:
+        return futures
+
+    return tqdm(futures, total=len(future_to_index), desc="LLM extract", unit="batch")
 
 
 def _report_attempt(

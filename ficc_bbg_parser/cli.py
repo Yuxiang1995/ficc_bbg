@@ -31,6 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--quote-lines-json-name", default="quote_lines.json", help="Quote line metadata JSON file name.")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="OpenAI-compatible API base URL.")
     parser.add_argument("--batch-size", type=int, default=20, help="Number of quote lines per extractor LLM call.")
+    parser.add_argument("--extract-workers", type=int, default=1, help="Parallel LLM requests for quote extraction.")
     parser.add_argument("--message-batch-size", type=int, default=10, help="Number of raw messages per splitter LLM call.")
     parser.add_argument("--max-retries", type=int, default=2, help="Retries per LLM batch.")
     parser.add_argument("--split-timeout", type=float, default=180, help="HTTP timeout seconds for the splitter LLM request.")
@@ -89,6 +90,7 @@ def main() -> None:
 
     extractor = OpenAIQuoteExtractor(
         batch_size=args.batch_size,
+        max_workers=args.extract_workers,
         max_retries=args.max_retries,
         request_timeout=args.extract_timeout,
         show_progress=not args.no_progress,

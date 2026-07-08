@@ -1,4 +1,5 @@
 import unittest
+import json
 
 from ficc_bbg_parser.models import ParagraphBlock, QuoteLine, QuoteRecord
 from ficc_bbg_parser.pipeline import parse_chat_text
@@ -112,6 +113,29 @@ class ParserTest(unittest.TestCase):
         self.assertEqual(quote_lines[0].text, "08:40:20 TOMMY HO : IIFOIN 7.6 29 >> 100.15/100.30")
         self.assertEqual(quote_lines[0].quote_time, "2026-06-04 08:40:20")
 
+    def test_llm_extractor_parallel_preserves_batch_order(self):
+        try:
+            from ficc_bbg_parser.llm_extractor import OpenAIQuoteExtractor
+        except ImportError as exc:
+            self.skipTest(f"OpenAI dependency is not installed: {exc}")
+
+        quote_lines = [
+            QuoteLine(line_id="line_00001", paragraph_id="para_00001", text="AAA 1 01/01/30 100/101"),
+            QuoteLine(line_id="line_00002", paragraph_id="para_00002", text="BBB 2 01/01/31 99/100"),
+            QuoteLine(line_id="line_00003", paragraph_id="para_00003", text="CCC 3 01/01/32 98/99"),
+        ]
+        extractor = OpenAIQuoteExtractor(
+            client=FakeExtractorClient(),
+            batch_size=1,
+            max_workers=3,
+            show_progress=False,
+        )
+
+        records = extractor.extract(quote_lines)
+
+        self.assertEqual([record.ticker for record in records], ["AAA", "BBB", "CCC"])
+        self.assertEqual([record.raw_line for record in records], [line.text for line in quote_lines])
+
 
 class FakeMessage:
     content = """
@@ -155,6 +179,74 @@ class FakeChat:
 
 class FakeOpenAIClient:
     chat = FakeChat()
+
+
+class FakeExtractorCompletions:
+    def create(self, **kwargs):
+        user_content = kwargs["messages"][1]["content"]
+        ticker = user_content.split()[0]
+        payload = {
+            "quotes": [
+                {
+                    "ticker": ticker,
+                    "isin": None,
+                    "issuer": None,
+                    "currency": None,
+                    "maturity_date": None,
+                    "coupon_type": None,
+                    "coupon_rate": None,
+                    "rating": None,
+                    "bid_price": None,
+                    "ask_price": None,
+                    "spread_bid_ask": None,
+                    "bid_size": None,
+                    "ask_size": None,
+                    "quote_time": None,
+                    "quote_source": None,
+                    "bond_type": "Secondary",
+                    "region": None,
+                    "remark": None,
+                    "quote_type": "price",
+                    "bid_spread": None,
+                    "ask_spread": None,
+                    "message_id": None,
+                    "message_type": "quote_single",
+                    "line_no": 1,
+                    "raw_line": user_content,
+                    "parser_name": None,
+                    "parse_status": "parsed",
+                    "confidence": 0.99,
+                }
+            ]
+        }
+        return _completion_with_content(json.dumps(payload))
+
+
+class FakeExtractorChat:
+    completions = FakeExtractorCompletions()
+
+
+class FakeExtractorClient:
+    chat = FakeExtractorChat()
+
+
+def _completion_with_content(content):
+    class Message:
+        pass
+
+    class Choice:
+        pass
+
+    class Completion:
+        pass
+
+    message = Message()
+    message.content = content
+    choice = Choice()
+    choice.message = message
+    completion = Completion()
+    completion.choices = [choice]
+    return completion
 
 
 if __name__ == "__main__":
