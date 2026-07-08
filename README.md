@@ -10,13 +10,15 @@ Splitting is two-step: local code first splits Bloomberg text into raw timestamp
 
 ```bash
 pip install -r requirements.txt
-export OPENAI_API_KEY="..."
+cp .env.example .env
 ```
+
+Fill `.env` with OpenAI-compatible API and SQL Server credentials.
 
 ## Run
 
 ```bash
-python -m ficc_bbg_parser.cli /path/to/pasted-text.txt --source-date 2026-06-04 --out-dir output
+python -m ficc_bbg_parser.cli /path/to/pasted-text.txt --input-source txt --source-date 2026-06-04 --out-dir output
 ```
 
 Outputs:
@@ -29,10 +31,10 @@ Outputs:
 
 ## Step-by-step Debugging
 
-Run only the splitter:
+Run only the splitter from a debug txt file:
 
 ```bash
-python -m ficc_bbg_parser.cli tests/email_text.txt --stage split --source-date 2026-06-04 --out-dir output
+python -m ficc_bbg_parser.cli tests/email_text.txt --input-source txt --stage split --source-date 2026-06-04 --out-dir output
 ```
 
 This writes `output/paragraphs.json`, `output/quote_lines.json`, and `output/quote_lines.txt`. The quote-line text file contains one quote statement per line. The splitter shows `LLM classify` progress by raw-message batch.
@@ -44,6 +46,35 @@ python -m ficc_bbg_parser.cli --stage extract --quote-lines-input output/quote_l
 ```
 
 The extractor shows batch progress by default. Disable it with `--no-progress`.
+
+## Production SQL Server Input
+
+Production mode reads `CONTENT` from SQL Server for one `RECEIVE_DATE` day:
+
+```bash
+python -m ficc_bbg_parser.cli \
+  --input-source sqlserver \
+  --receive-date 2026-06-04 \
+  --stage all \
+  --out-dir output
+```
+
+SQL Server settings live in `.env`:
+
+```dotenv
+DB_SERVER=172.30.10.78
+DB_PORT=1433
+DB_DATABASE=FICC_BBG_IB_PRD
+DB_TABLE=BBG_IB_CHAT_EMAIL_INFO
+DB_USERNAME=
+DB_PASSWORD=
+```
+
+The SQL filter is:
+
+```sql
+WHERE RECEIVE_DATE >= @date AND RECEIVE_DATE < DATEADD(day, 1, @date)
+```
 
 Useful tuning flags:
 

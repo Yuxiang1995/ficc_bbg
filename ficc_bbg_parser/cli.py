@@ -17,12 +17,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Parse Bloomberg chat bond quotes to JSON/XLSX.")
     parser.add_argument("input", nargs="?", type=Path, help="Input pasted Bloomberg chat text file.")
     parser.add_argument(
+        "--input-source",
+        choices=["txt", "sqlserver"],
+        default="txt",
+        help="Read raw text from a debug txt file or SQL Server.",
+    )
+    parser.add_argument(
         "--stage",
         choices=["split", "extract", "all"],
         default="all",
         help="Run only split, only LLM extraction, or the full pipeline.",
     )
     parser.add_argument("--source-date", help="Quote date in YYYY-MM-DD. Used to prefix HK quote time.")
+    parser.add_argument("--receive-date", help="SQL Server RECEIVE_DATE day in YYYY-MM-DD.")
     parser.add_argument("--out-dir", type=Path, default=Path("output"), help="Output directory.")
     parser.add_argument("--json-name", default="quotes.json", help="Output JSON file name.")
     parser.add_argument("--xlsx-name", default="quotes.xlsx", help="Output XLSX file name.")
@@ -56,11 +63,10 @@ def main() -> None:
     quote_lines_json_path = args.out_dir / args.quote_lines_json_name
 
     if args.stage in {"split", "all"}:
-        if args.input is None:
-            parser.error("input is required for --stage split/all")
         from .llm_splitter import OpenAIParagraphSplitter
 
-        raw_text = args.input.read_text(encoding="utf-8")
+        raw_text = _read_raw_text(args, parser)
+        source_date = args.source_date or args.receive_date
         splitter = OpenAIParagraphSplitter(
             message_batch_size=args.message_batch_size,
             max_retries=args.max_retries,
@@ -68,7 +74,7 @@ def main() -> None:
             show_progress=not args.no_progress,
             base_url=args.base_url,
         )
-        paragraphs, quote_lines = splitter.split(raw_text, source_date=args.source_date)
+        paragraphs, quote_lines = splitter.split(raw_text, source_date=source_date)
         write_paragraphs_json(paragraphs, paragraphs_path)
         write_quote_lines_json(quote_lines, quote_lines_json_path)
         write_quote_lines_txt(quote_lines, quote_lines_path)
@@ -110,6 +116,24 @@ def _read_quote_lines(path: Path):
     if path.suffix.lower() == ".json":
         return read_quote_lines_json(path)
     return read_quote_lines_txt(path)
+
+
+def _read_raw_text(args, parser) -> str:
+    if args.input_source == "txt":
+        if args.input is None:
+            parser.error("input is required when --input-source txt")
+        return args.input.read_text(encoding="utf-8")
+
+    receive_date = args.receive_date or args.source_date
+    if not receive_date:
+        parser.error("--receive-date or --source-date is required when --input-source sqlserver")
+
+    from .db_source import fetch_chat_email_content
+
+    raw_text = fetch_chat_email_content(receive_date)
+    if not raw_text.strip():
+        raise ValueError(f"No CONTENT found for RECEIVE_DATE day {receive_date}")
+    return raw_text
 
 
 if __name__ == "__main__":
