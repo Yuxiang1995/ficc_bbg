@@ -40,29 +40,26 @@ EXPORT_COLUMNS = REQUESTED_COLUMNS + DEBUG_COLUMNS
 
 
 @dataclass
-class MessageBlock:
-    message_id: str
-    message_time: str
-    speaker: str
+class ParagraphBlock:
+    paragraph_id: str
+    paragraph_type: str
     text: str
+    quote_time: Optional[str] = None
+    quote_source: Optional[str] = None
+    speaker: Optional[str] = None
     source_date: Optional[str] = None
-
-    @property
-    def quote_time(self) -> str:
-        if self.source_date:
-            return f"{self.source_date} {self.message_time}"
-        return self.message_time
+    confidence: float = 0.0
 
 
 @dataclass
-class MessageContext:
-    message_type: str
-    quote_source: str
-    bond_type: Optional[str] = None
-    currency: Optional[str] = None
-    region: Optional[str] = None
-    issuer: Optional[str] = None
-    title: Optional[str] = None
+class QuoteLine:
+    line_id: str
+    paragraph_id: str
+    text: str
+    quote_time: Optional[str] = None
+    quote_source: Optional[str] = None
+    speaker: Optional[str] = None
+    source_date: Optional[str] = None
 
 
 @dataclass

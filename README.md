@@ -2,9 +2,9 @@
 
 This project parses Bloomberg chat/email text into one quote record per bond quote.
 
-Current output is for review and debugging only: JSON, XLSX, and split message JSON. Database loading can be added after LLM extraction and static-data enrichment are stable.
+Current output is for review and debugging only: JSON, XLSX, paragraph JSON, and quote-line files. Database loading can be added after LLM extraction and static-data enrichment are stable.
 
-Extraction is performed by an OpenAI LLM using structured JSON output. Local code only splits Bloomberg messages, calls the model, performs small output cleanups, and exports files.
+Splitting is two-step: local code first splits Bloomberg text into raw timestamped messages, then an OpenAI-compatible LLM classifies each raw message and identifies quote line ranges. The extractor LLM then extracts structured fields from those quote lines only.
 
 ## Setup
 
@@ -23,39 +23,47 @@ Outputs:
 
 - `output/quotes.json`
 - `output/quotes.xlsx`
-- `output/messages.json`
+- `output/paragraphs.json`
+- `output/quote_lines.json`
+- `output/quote_lines.txt`
 
 ## Step-by-step Debugging
 
-Run only the Bloomberg message splitter:
+Run only the splitter:
 
 ```bash
 python -m ficc_bbg_parser.cli tests/email_text.txt --stage split --source-date 2026-06-04 --out-dir output
 ```
 
-This writes `output/messages.json` and does not call the LLM.
+This writes `output/paragraphs.json`, `output/quote_lines.json`, and `output/quote_lines.txt`. The quote-line text file contains one quote statement per line. The splitter shows `LLM classify` progress by raw-message batch.
 
-Run only LLM extraction from a previously generated messages file:
+Run only LLM extraction from previously generated quote lines:
 
 ```bash
-python -m ficc_bbg_parser.cli --stage extract --messages-input output/messages.json --out-dir output --batch-size 4
+python -m ficc_bbg_parser.cli --stage extract --quote-lines-input output/quote_lines.json --out-dir output --batch-size 20
 ```
 
 The extractor shows batch progress by default. Disable it with `--no-progress`.
 
 Useful tuning flags:
 
-- `--batch-size`: number of split messages per LLM call
+- `--batch-size`: number of single-line quote statements per extractor LLM call
+- `--message-batch-size`: number of raw timestamped messages per splitter LLM call
 - `--model`: extraction model
 - `--base-url`: OpenAI-compatible API base URL
 - `--max-retries`: retries per LLM batch
+- `--split-timeout`: HTTP timeout seconds for the splitter request
+- `--extract-timeout`: HTTP timeout seconds for each extractor request
 
 ## Parsing Layers
 
-1. Split Bloomberg chat text into timestamped message blocks.
-2. Send batches of message blocks to OpenAI with a strict JSON schema.
-3. The model decides which messages contain actual bond quotes and returns one record per quote.
-4. Export requested DB columns plus debug fields.
+1. Locally split raw Bloomberg chat text into timestamped raw messages using the Bloomberg time/speaker pattern.
+2. Send raw message batches to the LLM classifier.
+3. The classifier labels each message as `quote`, `axes`, `primary`, `stats`, `commentary`, or `noise`, and returns quote line ranges.
+4. Local code slices the original text by line range into `quote_lines`, one bond quote per line.
+5. The extractor receives only newline-delimited quote statements.
+6. The extractor returns one structured record per quote.
+7. Export requested DB columns plus debug fields.
 
 ## Notes
 
