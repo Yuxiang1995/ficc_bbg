@@ -30,7 +30,7 @@ ORDER BY RECEIVE_DATE
         as_dict=True,
     ) as conn:
         cursor = conn.cursor()
-        cursor.execute(sql, start_dt, end_dt)
+        cursor.execute(sql, (start_dt, end_dt))
         rows = []
         for row in cursor.fetchall():
             rows.append(
