@@ -52,7 +52,7 @@ quote_line_ranges rules:
 - For quote and axes messages, identify only actual tradable quote rows or quote statements.
 - Use one range per bond quote.
 - For tables, exclude headers and section labels. Include only data rows that are bond quotes.
-- If a quote statement spans multiple physical lines, use a multi-line range.
+- If a quote statement spans multiple physical lines, use a multi-line range, but usually no more than 3 lines.
 - For primary, stats, commentary, and noise messages, quote_line_ranges should usually be [].
 - Do not invent line numbers or quote text.
 - Return every input message exactly once in the messages array.
