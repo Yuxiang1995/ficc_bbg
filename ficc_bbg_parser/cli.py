@@ -39,7 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="OpenAI-compatible API base URL.")
     parser.add_argument("--batch-size", type=int, default=20, help="Number of quote lines per extractor LLM call.")
     parser.add_argument("--extract-workers", type=int, default=1, help="Parallel LLM requests for quote extraction.")
-    parser.add_argument("--message-batch-size", type=int, default=10, help="Number of raw messages per splitter LLM call.")
+    parser.add_argument("--message-batch-max-chars", type=int, default=16000, help="Target max payload chars per splitter LLM call.")
     parser.add_argument("--max-retries", type=int, default=2, help="Retries per LLM batch.")
     parser.add_argument("--split-timeout", type=float, default=180, help="HTTP timeout seconds for the splitter LLM request.")
     parser.add_argument("--extract-timeout", type=float, default=30, help="HTTP timeout seconds for each extractor LLM request.")
@@ -68,7 +68,7 @@ def main() -> None:
         raw_text = _read_raw_text(args, parser)
         source_date = args.source_date or args.receive_date
         splitter = OpenAIParagraphSplitter(
-            message_batch_size=args.message_batch_size,
+            message_batch_max_chars=args.message_batch_max_chars,
             max_retries=args.max_retries,
             request_timeout=args.split_timeout,
             show_progress=not args.no_progress,

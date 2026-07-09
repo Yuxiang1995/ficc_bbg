@@ -80,7 +80,7 @@ class OpenAIParagraphSplitter:
     def __init__(
         self,
         model: Optional[str] = None,
-        message_batch_size: int = 10,
+        message_batch_max_chars: int = 16000,
         max_retries: int = 1,
         request_timeout: float = 180,
         show_progress: bool = True,
@@ -88,7 +88,7 @@ class OpenAIParagraphSplitter:
         client: Optional[OpenAI] = None,
     ) -> None:
         self.model = model or os.getenv("OPENAI_MODEL") or BIG_MODEL
-        self.message_batch_size = message_batch_size
+        self.message_batch_max_chars = message_batch_max_chars
         self.max_retries = max_retries
         self.request_timeout = request_timeout
         self.show_progress = show_progress
@@ -122,7 +122,11 @@ class OpenAIParagraphSplitter:
 
     def _classify_messages(self, raw_messages: List[RawMessage], lines: List[str]) -> Dict[str, Any]:
         classified_messages: List[Dict[str, Any]] = []
-        batches = list(_chunks(raw_messages, self.message_batch_size))
+        batches = _balanced_message_batches(
+            raw_messages=raw_messages,
+            lines=lines,
+            target_chars=self.message_batch_max_chars,
+        )
 
         for batch_index, batch in _progress_batches(batches, self.show_progress):
             started_at = time.time()
@@ -132,6 +136,7 @@ class OpenAIParagraphSplitter:
                 batch_index=batch_index,
                 total_batches=len(batches),
                 batch_size=len(batch),
+                batch_chars=_batch_weight(batch, lines),
                 classified=len(response.get("messages", [])),
                 total_classified=len(classified_messages),
                 elapsed_seconds=time.time() - started_at,
@@ -342,8 +347,40 @@ def _default_quote_source(message: RawMessage) -> str:
     return message.speaker
 
 
-def _chunks(values: List[RawMessage], size: int) -> List[List[RawMessage]]:
-    return [values[start : start + size] for start in range(0, len(values), size)]
+def _balanced_message_batches(
+    raw_messages: List[RawMessage],
+    lines: List[str],
+    target_chars: int,
+) -> List[List[RawMessage]]:
+    if not raw_messages:
+        return []
+
+    target_chars = max(1, target_chars)
+    weighted = [(message, _message_weight(message, lines)) for message in raw_messages]
+    total_weight = sum(weight for _, weight in weighted)
+    batch_count = max(1, (total_weight + target_chars - 1) // target_chars + 1)
+    batch_count = min(batch_count, len(raw_messages))
+
+    batches: List[List[RawMessage]] = [[] for _ in range(batch_count)]
+    batch_weights = [0 for _ in batches]
+
+    for message, weight in sorted(weighted, key=lambda item: item[1], reverse=True):
+        best_index = min(range(len(batches)), key=lambda idx: batch_weights[idx])
+        batches[best_index].append(message)
+        batch_weights[best_index] += weight
+
+    for batch in batches:
+        batch.sort(key=lambda message: message.start_line)
+
+    return [batch for batch in sorted(batches, key=lambda batch: batch[0].start_line if batch else 0) if batch]
+
+
+def _message_weight(message: RawMessage, lines: List[str]) -> int:
+    return len(json.dumps(_message_payload(message, lines), ensure_ascii=False))
+
+
+def _batch_weight(batch: List[RawMessage], lines: List[str]) -> int:
+    return len(json.dumps({"messages": [_message_payload(message, lines) for message in batch]}, ensure_ascii=False))
 
 
 def _progress_batches(batches: List[List[RawMessage]], enabled: bool):
@@ -375,6 +412,7 @@ def _report_batch_done(
     batch_index: int,
     total_batches: int,
     batch_size: int,
+    batch_chars: int,
     classified: int,
     total_classified: int,
     elapsed_seconds: float,
@@ -387,6 +425,7 @@ def _report_batch_done(
         "classify "
         f"{batch_index}/{total_batches}: "
         f"raw_messages={batch_size}, "
+        f"chars={batch_chars}, "
         f"classified={classified}, "
         f"total_classified={total_classified}, "
         f"elapsed={elapsed_seconds:.1f}s",

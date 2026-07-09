@@ -80,7 +80,7 @@ Useful tuning flags:
 
 - `--batch-size`: number of single-line quote statements per extractor LLM call
 - `--extract-workers`: number of parallel extractor LLM requests
-- `--message-batch-size`: number of raw timestamped messages per splitter LLM call
+- `--message-batch-max-chars`: target max payload chars per splitter LLM call
 - `--model`: extraction model
 - `--base-url`: OpenAI-compatible API base URL
 - `--max-retries`: retries per LLM batch

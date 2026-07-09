@@ -136,6 +136,32 @@ class ParserTest(unittest.TestCase):
         self.assertEqual([record.ticker for record in records], ["AAA", "BBB", "CCC"])
         self.assertEqual([record.raw_line for record in records], [line.text for line in quote_lines])
 
+    def test_splitter_balances_message_batches_by_payload_length(self):
+        try:
+            from ficc_bbg_parser.llm_splitter import RawMessage, _balanced_message_batches, _batch_weight, _message_weight
+        except ImportError as exc:
+            self.skipTest(f"OpenAI dependency is not installed: {exc}")
+
+        lines = [
+            "08:00:00  A : " + ("long-a " * 500),
+            "08:01:00  A : short-a",
+            "08:02:00  A : " + ("long-b " * 500),
+            "08:03:00  A : short-b",
+        ]
+        messages = [
+            RawMessage(f"msg_{idx:05d}", f"08:0{idx}:00", "A", line, idx, idx)
+            for idx, line in enumerate(lines, start=1)
+        ]
+
+        target_chars = 4000
+        batches = _balanced_message_batches(messages, lines, target_chars=target_chars)
+        weights = [_batch_weight(batch, lines) for batch in batches]
+        total_weight = sum(_message_weight(message, lines) for message in messages)
+        expected_batch_count = min(len(messages), (total_weight + target_chars - 1) // target_chars + 1)
+
+        self.assertEqual(len(batches), expected_batch_count)
+        self.assertLessEqual(max(weights), target_chars)
+
 
 class FakeMessage:
     content = """
