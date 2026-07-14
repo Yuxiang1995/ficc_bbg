@@ -2,6 +2,7 @@ import argparse
 from pathlib import Path
 
 from .exporters import (
+    read_paragraphs_json,
     read_quote_lines_json,
     read_quote_lines_txt,
     write_paragraphs_json,
@@ -37,13 +38,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--quote-lines-name", default="quote_lines.txt", help="Newline-delimited quote line file name.")
     parser.add_argument("--quote-lines-json-name", default="quote_lines.json", help="Quote line metadata JSON file name.")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="OpenAI-compatible API base URL.")
-    parser.add_argument("--batch-size", type=int, default=20, help="Number of quote lines per extractor LLM call.")
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=20,
+        help="Maximum quote lines from one paragraph per extractor LLM call.",
+    )
     parser.add_argument("--extract-workers", type=int, default=1, help="Parallel LLM requests for quote extraction.")
     parser.add_argument("--message-batch-max-chars", type=int, default=16000, help="Target max payload chars per splitter LLM call.")
     parser.add_argument("--max-retries", type=int, default=2, help="Retries per LLM batch.")
     parser.add_argument("--split-timeout", type=float, default=180, help="HTTP timeout seconds for the splitter LLM request.")
-    parser.add_argument("--extract-timeout", type=float, default=30, help="HTTP timeout seconds for each extractor LLM request.")
+    parser.add_argument("--extract-timeout", type=float, default=90, help="HTTP timeout seconds for each extractor LLM request.")
     parser.add_argument("--no-progress", action="store_true", help="Disable LLM extraction progress output.")
+    parser.add_argument(
+        "--paragraphs-input",
+        type=Path,
+        help="Use an existing paragraphs.json as extractor context for --stage extract.",
+    )
     parser.add_argument(
         "--quote-lines-input",
         type=Path,
@@ -89,8 +100,13 @@ def main() -> None:
     else:
         source_quote_lines_path = args.quote_lines_input or args.input or quote_lines_json_path
         quote_lines = _read_quote_lines(source_quote_lines_path)
+        source_paragraphs_path = args.paragraphs_input or paragraphs_path
+        paragraphs = read_paragraphs_json(source_paragraphs_path) if source_paragraphs_path.exists() else []
         print(f"quote_lines={len(quote_lines)}")
         print(f"quote_lines_input={source_quote_lines_path}")
+        if paragraphs:
+            print(f"paragraphs={len(paragraphs)}")
+            print(f"paragraphs_input={source_paragraphs_path}")
 
     from .llm_extractor import OpenAIQuoteExtractor
 
@@ -102,7 +118,7 @@ def main() -> None:
         show_progress=not args.no_progress,
         base_url=args.base_url,
     )
-    records = extractor.extract(quote_lines)
+    records = extractor.extract(quote_lines, paragraphs=paragraphs)
 
     write_quotes_json(records, json_path)
     write_quotes_xlsx(records, xlsx_path)

@@ -42,10 +42,10 @@ This writes `output/paragraphs.json`, `output/quote_lines.json`, and `output/quo
 Run only LLM extraction from previously generated quote lines:
 
 ```bash
-python -m ficc_bbg_parser.cli --stage extract --quote-lines-input output/quote_lines.json --out-dir output --batch-size 20
+python -m ficc_bbg_parser.cli --stage extract --quote-lines-input output/quote_lines.json --paragraphs-input output/paragraphs.json --out-dir output --extract-workers 4 --batch-size 10
 ```
 
-The extractor shows batch progress by default. Disable it with `--no-progress`.
+The extractor groups quote lines by paragraph and includes the first five lines of that paragraph once as auxiliary context in each LLM request. Paragraphs larger than `--batch-size` are split into multiple requests. The extractor shows batch progress by default. Disable it with `--no-progress`.
 
 ## Production SQL Server Input
 
@@ -78,7 +78,7 @@ WHERE RECEIVE_DATE >= @date AND RECEIVE_DATE < DATEADD(day, 1, @date)
 
 Useful tuning flags:
 
-- `--batch-size`: number of single-line quote statements per extractor LLM call
+- `--batch-size`: maximum quote lines from one paragraph per extractor LLM call
 - `--extract-workers`: number of parallel extractor LLM requests
 - `--message-batch-max-chars`: target max payload chars per splitter LLM call
 - `--model`: extraction model
@@ -93,7 +93,7 @@ Useful tuning flags:
 2. Send raw message batches to the LLM classifier.
 3. The classifier labels each message as `quote`, `axes`, `primary`, `stats`, `commentary`, or `noise`, and returns quote line ranges.
 4. Local code slices the original text by line range into `quote_lines`, one bond quote per line.
-5. The extractor receives only newline-delimited quote statements.
+5. The extractor groups quote lines by paragraph and receives the paragraph's first five lines once as auxiliary context plus the target quote lines.
 6. The extractor returns one structured record per quote.
 7. Export requested DB columns plus debug fields.
 

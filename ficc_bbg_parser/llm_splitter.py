@@ -32,7 +32,8 @@ Return this JSON shape:
       "message_id": "msg_00001",
       "message_type": "quote" | "axes" | "primary" | "stats" | "commentary" | "noise",
       "quote_line_ranges": [
-        {"start_line": 12, "end_line": 12}
+        {"start_line": 12, "end_line": 12},
+        {"start_line": 13, "end_line": 13}
       ],
       "quote_source": "speaker/title/source or null",
       "confidence": 0.0
@@ -50,9 +51,16 @@ Message type definitions:
 
 quote_line_ranges rules:
 - For quote and axes messages, identify only actual tradable quote rows or quote statements.
-- Use one range per bond quote.
+- Use exactly one range per bond quote. A range must never contain two or more bonds.
+- When consecutive physical lines each contain a different bond quote, return a separate
+  single-line range for every line. For example, three bond rows on lines 12, 13, and 14
+  must be returned as [{"start_line": 12, "end_line": 12},
+  {"start_line": 13, "end_line": 13}, {"start_line": 14, "end_line": 14}].
+  Never merge them into [{"start_line": 12, "end_line": 14}].
 - For tables, exclude headers and section labels. Include only data rows that are bond quotes.
-- If a quote statement spans multiple physical lines, use a multi-line range, but usually no more than 3 lines.
+- Use a multi-line range only when one single bond quote is visibly wrapped across physical
+  lines. Never use a multi-line range merely because quote rows are adjacent or belong to
+  the same table section. A multi-line range should usually contain no more than 3 lines.
 - For primary, stats, commentary, and noise messages, quote_line_ranges should usually be [].
 - Do not invent line numbers or quote text.
 - Return every input message exactly once in the messages array.

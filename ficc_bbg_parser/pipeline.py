@@ -9,7 +9,11 @@ class ParagraphSplitter(Protocol):
 
 
 class QuoteExtractor(Protocol):
-    def extract(self, quote_lines: List[QuoteLine]) -> List[QuoteRecord]:
+    def extract(
+        self,
+        quote_lines: List[QuoteLine],
+        paragraphs: Optional[List[ParagraphBlock]] = None,
+    ) -> List[QuoteRecord]:
         ...
 
 
@@ -29,4 +33,4 @@ def parse_chat_text(
         extractor = OpenAIQuoteExtractor()
 
     paragraphs, quote_lines = splitter.split(raw_text, source_date=source_date)
-    return paragraphs, quote_lines, extractor.extract(quote_lines)
+    return paragraphs, quote_lines, extractor.extract(quote_lines, paragraphs=paragraphs)

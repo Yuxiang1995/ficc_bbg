@@ -1,21 +1,36 @@
+import json
 import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional
 
 import httpx
 from openai import OpenAI
 
 from .json_utils import load_json_object
-from .models import EXPORT_COLUMNS, QuoteLine, QuoteRecord
+from .models import EXPORT_COLUMNS, ParagraphBlock, QuoteLine, QuoteRecord
 from .settings import DEFAULT_BASE_URL, MID_MODEL
 
 
 
-SYSTEM_PROMPT = """You extract institutional bond quotes from single-line quote statements.
+SYSTEM_PROMPT = """You extract institutional bond quotes from quote_lines.
 
 Return only one valid JSON object. Do not wrap it in markdown. Do not include explanatory text.
+
+The user message is a JSON object with:
+- paragraph_context: up to the first five lines of the shared source paragraph,
+  or null when unavailable.
+- quote_lines: the quote statements that must be extracted.
+
+quote_lines are the only extraction targets and the primary source of truth.
+paragraph_context is auxiliary information only. You may use it to resolve shared
+information explicitly present in the paragraph, such as a heading, currency, quote
+side, unit, or Primary/Secondary context that is omitted from an individual quote line.
+Never create a quote from paragraph_context, and never return a quote that is not tied
+to one of the supplied quote_lines. If paragraph_context conflicts with a quote line,
+the quote line wins. Do not copy bond-specific values from one quote line to another.
 
 The JSON object must have this shape:
 {
@@ -32,6 +47,8 @@ The JSON object must have this shape:
       "bid_price": number or null,
       "ask_price": number or null,
       "spread_bid_ask": number or null,
+      "bid_spread": number or null,
+      "ask_spread": number or null,
       "bid_size": number or null,
       "ask_size": number or null,
       "quote_time": null,
@@ -51,27 +68,35 @@ The JSON object must have this shape:
   ]
 }
 
-Put one item in quotes for every
-input line that contains an actual bond quote. The user message contains only quote
-statements, separated by newline characters. Do not use any context outside each line.
+Put one item in quotes for every item in quote_lines that contains an actual bond quote.
 
 Important extraction rules:
 - Preserve source values. Do not invent ISIN, issuer full name, rating, currency, or region.
 - Use null when a field is unknown or not explicitly implied by the text.
-- line_no must be the 1-based line number in the current input batch.
+- line_no must equal the 1-based line_no supplied with the quote line in the current batch.
 - message_id, quote_time, and quote_source may be null; local post-processing will fill them.
 - bond_type is Primary for new issue/primary market lines, otherwise Secondary.
 - quote_type is price for price pairs, spread for spread pairs in bp, offer for offer-only axes/lists, bid for bid-only, yield for yield-only.
 - Price quotes use bid_price and ask_price.
 - For spread pairs, spread_bid_ask is the absolute bid/ask spread difference in bp.
-- For size pairs like 25x10mm, bid_size is 25 and ask_size is 10.
+- For size pairs like 25x10mm, bid_size is 25k and ask_size is 10k.
 - For abbreviated price pairs like 100.25/40, ask_price is 100.40.
 - Convert fractions like 4⅜ to decimal coupon_rate 4.375.
 - coupon_type is FRN for Float/FRN/SOFR floating-rate bonds; Fixed for fixed coupon bonds.
 - Normalize maturity_date to YYYY-MM-DD when day is present, YYYY-MM when only month/year is present, or YYYY when only year is present.
-- raw_line should be the exact input line that produced the quote.
+- raw_line should exactly equal the text of the quote_line that produced the quote.
 - confidence is 0 to 1. Use needs_review when a quote is real but key fields are ambiguous.
 """
+
+
+PARAGRAPH_CONTEXT_MAX_LINES = 5
+
+
+@dataclass
+class ExtractionBatch:
+    paragraph_id: str
+    paragraph: Optional[ParagraphBlock]
+    quote_lines: List[QuoteLine]
 
 
 class OpenAIQuoteExtractor:
@@ -99,14 +124,18 @@ class OpenAIQuoteExtractor:
             timeout=_http_timeout(request_timeout),
         )
 
-    def extract(self, quote_lines: List[QuoteLine]) -> List[QuoteRecord]:
-        batches = list(_chunks(quote_lines, self.batch_size))
+    def extract(
+        self,
+        quote_lines: List[QuoteLine],
+        paragraphs: Optional[List[ParagraphBlock]] = None,
+    ) -> List[QuoteRecord]:
+        batches = _paragraph_batches(quote_lines, paragraphs or [], self.batch_size)
         if self.max_workers <= 1 or len(batches) <= 1:
             return self._extract_sequential(batches)
 
         return self._extract_parallel(batches)
 
-    def _extract_sequential(self, batches: List[List[QuoteLine]]) -> List[QuoteRecord]:
+    def _extract_sequential(self, batches: List[ExtractionBatch]) -> List[QuoteRecord]:
         records: List[QuoteRecord] = []
         for batch_index, batch in _progress_batches(batches, self.show_progress):
             started_at = time.time()
@@ -115,7 +144,8 @@ class OpenAIQuoteExtractor:
             _report_batch_done(
                 batch_index=batch_index,
                 total_batches=len(batches),
-                batch_size=len(batch),
+                paragraph_id=batch.paragraph_id,
+                batch_size=len(batch.quote_lines),
                 batch_records=len(batch_records),
                 total_records=len(records),
                 elapsed_seconds=time.time() - started_at,
@@ -123,7 +153,7 @@ class OpenAIQuoteExtractor:
             )
         return records
 
-    def _extract_parallel(self, batches: List[List[QuoteLine]]) -> List[QuoteRecord]:
+    def _extract_parallel(self, batches: List[ExtractionBatch]) -> List[QuoteRecord]:
         results: Dict[int, List[QuoteRecord]] = {}
         max_workers = min(self.max_workers, len(batches))
 
@@ -140,7 +170,8 @@ class OpenAIQuoteExtractor:
                 _report_batch_done(
                     batch_index=batch_index,
                     total_batches=len(batches),
-                    batch_size=len(batches[batch_index - 1]),
+                    paragraph_id=batches[batch_index - 1].paragraph_id,
+                    batch_size=len(batches[batch_index - 1].quote_lines),
                     batch_records=len(batch_records),
                     total_records=sum(len(records) for records in results.values()),
                     elapsed_seconds=elapsed_seconds,
@@ -152,16 +183,29 @@ class OpenAIQuoteExtractor:
             ordered_records.extend(results[batch_index])
         return ordered_records
 
-    def _timed_extract_batch(self, batch: List[QuoteLine]):
+    def _timed_extract_batch(self, batch: ExtractionBatch):
         started_at = time.time()
         return self._extract_batch(batch), time.time() - started_at
 
-    def _extract_batch(self, batch: List[QuoteLine]) -> List[QuoteRecord]:
+    def _extract_batch(self, batch: ExtractionBatch) -> List[QuoteRecord]:
         response = self._call_model(batch)
-        return _records_from_payload(response, batch)
+        return _records_from_payload(response, batch.quote_lines)
 
-    def _call_model(self, quote_lines: List[QuoteLine]) -> Dict[str, Any]:
-        user_content = "\n".join(line.text for line in quote_lines)
+    def _call_model(self, batch: ExtractionBatch) -> Dict[str, Any]:
+        user_content = json.dumps(
+            {
+                "paragraph_context": _paragraph_payload(batch.paragraph),
+                "quote_lines": [
+                    {
+                        "line_no": line_no,
+                        "line_id": quote_line.line_id,
+                        "text": quote_line.text,
+                    }
+                    for line_no, quote_line in enumerate(batch.quote_lines, start=1)
+                ],
+            },
+            ensure_ascii=False,
+        )
         last_error: Optional[Exception] = None
 
         for attempt in range(self.max_retries + 1):
@@ -189,6 +233,7 @@ class OpenAIQuoteExtractor:
                     raise ValueError("OpenAI response did not include message content")
                 return load_json_object(content)
             except Exception as exc:
+                print("===========================\n", user_content)
                 last_error = exc
                 if attempt >= self.max_retries:
                     break
@@ -247,12 +292,52 @@ def _global_line_no(quote_line: QuoteLine) -> Optional[int]:
         return None
 
 
+def _paragraph_batches(
+    quote_lines: List[QuoteLine],
+    paragraphs: List[ParagraphBlock],
+    batch_size: int,
+) -> List[ExtractionBatch]:
+    if batch_size <= 0:
+        raise ValueError("batch_size must be greater than 0")
+
+    paragraphs_by_id = {paragraph.paragraph_id: paragraph for paragraph in paragraphs}
+    grouped_lines: Dict[str, List[QuoteLine]] = {}
+    for quote_line in quote_lines:
+        grouped_lines.setdefault(quote_line.paragraph_id, []).append(quote_line)
+
+    batches: List[ExtractionBatch] = []
+    for paragraph_id, paragraph_lines in grouped_lines.items():
+        for line_batch in _chunks(paragraph_lines, batch_size):
+            batches.append(
+                ExtractionBatch(
+                    paragraph_id=paragraph_id,
+                    paragraph=paragraphs_by_id.get(paragraph_id),
+                    quote_lines=line_batch,
+                )
+            )
+    return batches
+
+
+def _paragraph_payload(paragraph: Optional[ParagraphBlock]) -> Optional[Dict[str, Any]]:
+    if paragraph is None:
+        return None
+    return {
+        "paragraph_id": paragraph.paragraph_id,
+        "paragraph_type": paragraph.paragraph_type,
+        "text": "\n".join(paragraph.text.split("\n")[:PARAGRAPH_CONTEXT_MAX_LINES]),
+        "quote_time": paragraph.quote_time,
+        "quote_source": paragraph.quote_source,
+        "speaker": paragraph.speaker,
+        "source_date": paragraph.source_date,
+    }
+
+
 def _chunks(values: List[QuoteLine], size: int) -> Iterable[List[QuoteLine]]:
     for start in range(0, len(values), size):
         yield values[start : start + size]
 
 
-def _progress_batches(batches: List[List[QuoteLine]], enabled: bool):
+def _progress_batches(batches: List[ExtractionBatch], enabled: bool):
     if not enabled:
         return enumerate(batches, start=1)
 
@@ -297,6 +382,7 @@ def _report_attempt(
 def _report_batch_done(
     batch_index: int,
     total_batches: int,
+    paragraph_id: str,
     batch_size: int,
     batch_records: int,
     total_records: int,
@@ -311,7 +397,8 @@ def _report_batch_done(
     print(
         "batch "
         f"{batch_index}/{total_batches}: "
-        f"messages={batch_size}, "
+        f"paragraph={paragraph_id}, "
+        f"quote_lines={batch_size}, "
         f"quotes={batch_records}, "
         f"total_quotes={total_records}, "
         f"elapsed={elapsed_seconds:.1f}s",

@@ -42,9 +42,11 @@ class FakeLLMSplitter:
 class FakeLLMExtractor:
     def __init__(self):
         self.quote_lines = []
+        self.paragraphs = []
 
-    def extract(self, quote_lines):
+    def extract(self, quote_lines, paragraphs=None):
         self.quote_lines = quote_lines
+        self.paragraphs = paragraphs or []
         first = quote_lines[0]
         return [
             QuoteRecord(
@@ -87,6 +89,7 @@ class ParserTest(unittest.TestCase):
         self.assertEqual(len(paragraphs), 1)
         self.assertEqual(len(quote_lines), 1)
         self.assertEqual(len(extractor.quote_lines), 1)
+        self.assertEqual(extractor.paragraphs, paragraphs)
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].ticker, "IIFOIN")
         self.assertEqual(records[0].bid_price, 100.15)
@@ -135,6 +138,55 @@ class ParserTest(unittest.TestCase):
 
         self.assertEqual([record.ticker for record in records], ["AAA", "BBB", "CCC"])
         self.assertEqual([record.raw_line for record in records], [line.text for line in quote_lines])
+
+    def test_llm_extractor_batches_by_paragraph_and_batch_size(self):
+        try:
+            from ficc_bbg_parser.llm_extractor import _paragraph_batches
+        except ImportError as exc:
+            self.skipTest(f"OpenAI dependency is not installed: {exc}")
+
+        paragraphs = [
+            ParagraphBlock("para_00001", "quote_list", "paragraph one"),
+            ParagraphBlock("para_00002", "quote", "paragraph two"),
+        ]
+        quote_lines = [
+            QuoteLine(f"line_{idx:05d}", "para_00001", f"AAA {idx}")
+            for idx in range(1, 4)
+        ] + [QuoteLine("line_00004", "para_00002", "BBB 4")]
+
+        batches = _paragraph_batches(quote_lines, paragraphs, batch_size=2)
+
+        self.assertEqual([batch.paragraph_id for batch in batches], ["para_00001", "para_00001", "para_00002"])
+        self.assertEqual([len(batch.quote_lines) for batch in batches], [2, 1, 1])
+        self.assertIs(batches[0].paragraph, paragraphs[0])
+
+    def test_llm_extractor_sends_paragraph_once_as_auxiliary_context(self):
+        try:
+            from ficc_bbg_parser.llm_extractor import OpenAIQuoteExtractor
+        except ImportError as exc:
+            self.skipTest(f"OpenAI dependency is not installed: {exc}")
+
+        client = RecordingExtractorClient()
+        paragraph_lines = [
+            "USD senior list",
+            "header two",
+            "header three",
+            "header four",
+            "header five",
+            "header six",
+            "AAA 1 2030 100/101",
+        ]
+        paragraph = ParagraphBlock("para_00001", "quote_list", "\n".join(paragraph_lines))
+        quote_line = QuoteLine("line_00001", "para_00001", "AAA 1 2030 100/101")
+        extractor = OpenAIQuoteExtractor(client=client, show_progress=False)
+
+        extractor.extract([quote_line], paragraphs=[paragraph])
+
+        user_payload = json.loads(client.completions.user_content)
+        self.assertEqual(user_payload["paragraph_context"]["text"], "\n".join(paragraph_lines[:5]))
+        self.assertEqual(user_payload["quote_lines"], [
+            {"line_no": 1, "line_id": "line_00001", "text": quote_line.text}
+        ])
 
     def test_splitter_balances_message_batches_by_payload_length(self):
         try:
@@ -210,7 +262,9 @@ class FakeOpenAIClient:
 class FakeExtractorCompletions:
     def create(self, **kwargs):
         user_content = kwargs["messages"][1]["content"]
-        ticker = user_content.split()[0]
+        user_payload = json.loads(user_content)
+        quote_line = user_payload["quote_lines"][0]
+        ticker = quote_line["text"].split()[0]
         payload = {
             "quotes": [
                 {
@@ -238,7 +292,7 @@ class FakeExtractorCompletions:
                     "message_id": None,
                     "message_type": "quote_single",
                     "line_no": 1,
-                    "raw_line": user_content,
+                    "raw_line": quote_line["text"],
                     "parser_name": None,
                     "parse_status": "parsed",
                     "confidence": 0.99,
@@ -254,6 +308,21 @@ class FakeExtractorChat:
 
 class FakeExtractorClient:
     chat = FakeExtractorChat()
+
+
+class RecordingExtractorCompletions(FakeExtractorCompletions):
+    def __init__(self):
+        self.user_content = None
+
+    def create(self, **kwargs):
+        self.user_content = kwargs["messages"][1]["content"]
+        return super().create(**kwargs)
+
+
+class RecordingExtractorClient:
+    def __init__(self):
+        self.completions = RecordingExtractorCompletions()
+        self.chat = type("Chat", (), {"completions": self.completions})()
 
 
 def _completion_with_content(content):

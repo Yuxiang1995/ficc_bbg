@@ -18,3 +18,5 @@ env/
 output/
 
 .DS_Store
+
+test_*
