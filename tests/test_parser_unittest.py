@@ -214,6 +214,40 @@ class ParserTest(unittest.TestCase):
         self.assertEqual(len(batches), expected_batch_count)
         self.assertLessEqual(max(weights), target_chars)
 
+    def test_postgres_store_parses_partial_maturities(self):
+        from ficc_bbg_parser.pg_store import _parse_datetime, _parse_maturity
+
+        year = _parse_maturity("2031")
+        month = _parse_maturity("2031-06")
+        day = _parse_maturity("2031-06-30")
+
+        self.assertEqual((year["precision"], year["year"]), ("year", 2031))
+        self.assertEqual(
+            (month["precision"], month["year"], month["month"]),
+            ("month", 2031, 6),
+        )
+        self.assertEqual(day["precision"], "day")
+        self.assertEqual(day["date"].isoformat(), "2031-06-30")
+        self.assertEqual(
+            _parse_datetime("2026-06-04 09:00:00").utcoffset().total_seconds(),
+            8 * 60 * 60,
+        )
+
+    def test_postgres_store_adds_manual_input_paragraph(self):
+        from ficc_bbg_parser.pg_store import _with_missing_paragraphs
+
+        quote_lines = [
+            QuoteLine("line_00001", "manual_input", "AAA 1 2030 100/101"),
+            QuoteLine("line_00002", "manual_input", "BBB 2 2031 99/100"),
+        ]
+
+        paragraphs = _with_missing_paragraphs([], quote_lines)
+
+        self.assertEqual(len(paragraphs), 1)
+        self.assertEqual(paragraphs[0].paragraph_id, "manual_input")
+        self.assertEqual(paragraphs[0].paragraph_type, "quote")
+        self.assertEqual(paragraphs[0].text, "AAA 1 2030 100/101\nBBB 2 2031 99/100")
+
 
 class FakeMessage:
     content = """
