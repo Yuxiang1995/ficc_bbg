@@ -10,7 +10,7 @@ import httpx
 from openai import OpenAI
 
 from .json_utils import load_json_object
-from .models import EXPORT_COLUMNS, ParagraphBlock, QuoteLine, QuoteRecord
+from .models import ExtractionFailure, EXPORT_COLUMNS, ParagraphBlock, QuoteLine, QuoteRecord
 from .settings import DEFAULT_BASE_URL, MID_MODEL
 
 
@@ -99,24 +99,33 @@ class ExtractionBatch:
     quote_lines: List[QuoteLine]
 
 
+@dataclass
+class BatchExtractionResult:
+    records: List[QuoteRecord]
+    failures: List[ExtractionFailure]
+
+
 class OpenAIQuoteExtractor:
     def __init__(
         self,
         model: Optional[str] = None,
         batch_size: int = 8,
         max_workers: int = 1,
-        max_retries: int = 1,
+        max_retries: int = 2,
         request_timeout: float = 30,
         show_progress: bool = True,
         base_url: Optional[str] = None,
         client: Optional[OpenAI] = None,
         ) -> None:
+        if max_retries < 0:
+            raise ValueError("max_retries must be 0 or greater")
         self.model = model or os.getenv("OPENAI_MODEL") or MID_MODEL
         self.batch_size = batch_size
         self.max_workers = max_workers
         self.max_retries = max_retries
         self.request_timeout = request_timeout
         self.show_progress = show_progress
+        self.failures: List[ExtractionFailure] = []
         self.client = client or OpenAI(
             api_key=os.getenv("OPENAI_API_KEY"),
             base_url=base_url or os.getenv("OPENAI_BASE_URL") or DEFAULT_BASE_URL,
@@ -129,6 +138,7 @@ class OpenAIQuoteExtractor:
         quote_lines: List[QuoteLine],
         paragraphs: Optional[List[ParagraphBlock]] = None,
     ) -> List[QuoteRecord]:
+        self.failures = []
         batches = _paragraph_batches(quote_lines, paragraphs or [], self.batch_size)
         if self.max_workers <= 1 or len(batches) <= 1:
             return self._extract_sequential(batches)
@@ -139,22 +149,25 @@ class OpenAIQuoteExtractor:
         records: List[QuoteRecord] = []
         for batch_index, batch in _progress_batches(batches, self.show_progress):
             started_at = time.time()
-            batch_records = self._extract_batch(batch)
-            records.extend(batch_records)
+            result = self._extract_batch(batch)
+            records.extend(result.records)
+            self.failures.extend(result.failures)
             _report_batch_done(
                 batch_index=batch_index,
                 total_batches=len(batches),
                 paragraph_id=batch.paragraph_id,
                 batch_size=len(batch.quote_lines),
-                batch_records=len(batch_records),
+                batch_records=len(result.records),
+                batch_failures=len(result.failures),
                 total_records=len(records),
+                total_failures=len(self.failures),
                 elapsed_seconds=time.time() - started_at,
                 enabled=self.show_progress,
             )
         return records
 
     def _extract_parallel(self, batches: List[ExtractionBatch]) -> List[QuoteRecord]:
-        results: Dict[int, List[QuoteRecord]] = {}
+        results: Dict[int, BatchExtractionResult] = {}
         max_workers = min(self.max_workers, len(batches))
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -165,33 +178,50 @@ class OpenAIQuoteExtractor:
 
             for future in _progress_futures(future_to_index, self.show_progress):
                 batch_index = future_to_index[future]
-                batch_records, elapsed_seconds = future.result()
-                results[batch_index] = batch_records
+                result, elapsed_seconds = future.result()
+                results[batch_index] = result
                 _report_batch_done(
                     batch_index=batch_index,
                     total_batches=len(batches),
                     paragraph_id=batches[batch_index - 1].paragraph_id,
                     batch_size=len(batches[batch_index - 1].quote_lines),
-                    batch_records=len(batch_records),
-                    total_records=sum(len(records) for records in results.values()),
+                    batch_records=len(result.records),
+                    batch_failures=len(result.failures),
+                    total_records=sum(len(item.records) for item in results.values()),
+                    total_failures=sum(len(item.failures) for item in results.values()),
                     elapsed_seconds=elapsed_seconds,
                     enabled=self.show_progress,
                 )
 
         ordered_records: List[QuoteRecord] = []
         for batch_index in sorted(results):
-            ordered_records.extend(results[batch_index])
+            ordered_records.extend(results[batch_index].records)
+            self.failures.extend(results[batch_index].failures)
         return ordered_records
 
     def _timed_extract_batch(self, batch: ExtractionBatch):
         started_at = time.time()
         return self._extract_batch(batch), time.time() - started_at
 
-    def _extract_batch(self, batch: ExtractionBatch) -> List[QuoteRecord]:
-        response = self._call_model(batch)
-        return _records_from_payload(response, batch.quote_lines)
+    def _extract_batch(self, batch: ExtractionBatch) -> BatchExtractionResult:
+        try:
+            records = self._call_model(batch)
+        except RuntimeError as exc:
+            return BatchExtractionResult(
+                records=[],
+                failures=_failures_from_batch(
+                    batch=batch,
+                    model=self.model,
+                    attempts=self.max_retries + 1,
+                    error=exc.__cause__ or exc,
+                ),
+            )
+        return BatchExtractionResult(
+            records=records,
+            failures=[],
+        )
 
-    def _call_model(self, batch: ExtractionBatch) -> Dict[str, Any]:
+    def _call_model(self, batch: ExtractionBatch) -> List[QuoteRecord]:
         user_content = json.dumps(
             {
                 "paragraph_context": _paragraph_payload(batch.paragraph),
@@ -231,15 +261,39 @@ class OpenAIQuoteExtractor:
                 content = completion.choices[0].message.content
                 if content is None:
                     raise ValueError("OpenAI response did not include message content")
-                return load_json_object(content)
+                payload = load_json_object(content)
+                return _records_from_payload(payload, batch.quote_lines)
             except Exception as exc:
-                print("===========================\n", user_content)
                 last_error = exc
                 if attempt >= self.max_retries:
                     break
                 time.sleep(min(2**attempt, 8))
 
         raise RuntimeError(f"OpenAI quote extraction failed: {last_error}") from last_error
+
+
+def _failures_from_batch(
+    batch: ExtractionBatch,
+    model: str,
+    attempts: int,
+    error: Exception,
+) -> List[ExtractionFailure]:
+    return [
+        ExtractionFailure(
+            line_id=quote_line.line_id,
+            paragraph_id=quote_line.paragraph_id,
+            raw_line=quote_line.text,
+            model=model,
+            attempts=attempts,
+            error_type=type(error).__name__,
+            error_message=str(error),
+            quote_time=quote_line.quote_time,
+            quote_source=quote_line.quote_source,
+            speaker=quote_line.speaker,
+            source_date=quote_line.source_date,
+        )
+        for quote_line in batch.quote_lines
+    ]
 
 
 def _records_from_payload(payload: Dict[str, Any], quote_lines: List[QuoteLine]) -> List[QuoteRecord]:
@@ -385,7 +439,9 @@ def _report_batch_done(
     paragraph_id: str,
     batch_size: int,
     batch_records: int,
+    batch_failures: int,
     total_records: int,
+    total_failures: int,
     elapsed_seconds: float,
     enabled: bool,
 ) -> None:
@@ -400,7 +456,9 @@ def _report_batch_done(
         f"paragraph={paragraph_id}, "
         f"quote_lines={batch_size}, "
         f"quotes={batch_records}, "
+        f"failures={batch_failures}, "
         f"total_quotes={total_records}, "
+        f"total_failures={total_failures}, "
         f"elapsed={elapsed_seconds:.1f}s",
         file=sys.stderr,
     )

@@ -63,6 +63,24 @@ class QuoteLine:
 
 
 @dataclass
+class ExtractionFailure:
+    line_id: str
+    paragraph_id: str
+    raw_line: str
+    model: str
+    attempts: int
+    error_type: str
+    error_message: str
+    quote_time: Optional[str] = None
+    quote_source: Optional[str] = None
+    speaker: Optional[str] = None
+    source_date: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class QuoteRecord:
     ticker: Optional[str] = None
     isin: Optional[str] = None

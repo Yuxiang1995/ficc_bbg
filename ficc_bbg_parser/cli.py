@@ -5,6 +5,7 @@ from .exporters import (
     read_paragraphs_json,
     read_quote_lines_json,
     read_quote_lines_txt,
+    write_extraction_failures_json,
     write_paragraphs_json,
     write_quote_lines_json,
     write_quote_lines_txt,
@@ -36,6 +37,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out-dir", type=Path, default=Path("output"), help="Output directory.")
     parser.add_argument("--json-name", default="quotes.json", help="Output JSON file name.")
     parser.add_argument("--xlsx-name", default="quotes.xlsx", help="Output XLSX file name.")
+    parser.add_argument(
+        "--failures-name",
+        default="extraction_failures.json",
+        help="Debug JSON file name for quote lines skipped after all retries.",
+    )
     parser.add_argument("--paragraphs-name", default="paragraphs.json", help="LLM split paragraph JSON file name.")
     parser.add_argument("--quote-lines-name", default="quote_lines.txt", help="Newline-delimited quote line file name.")
     parser.add_argument("--quote-lines-json-name", default="quote_lines.json", help="Quote line metadata JSON file name.")
@@ -77,6 +83,7 @@ def main() -> None:
 
     json_path = args.out_dir / args.json_name
     xlsx_path = args.out_dir / args.xlsx_name
+    failures_path = args.out_dir / args.failures_name
     paragraphs_path = args.out_dir / args.paragraphs_name
     quote_lines_path = args.out_dir / args.quote_lines_name
     quote_lines_json_path = args.out_dir / args.quote_lines_json_name
@@ -133,10 +140,12 @@ def main() -> None:
         base_url=args.base_url,
     )
     records = extractor.extract(quote_lines, paragraphs=paragraphs)
+    failures = extractor.failures
 
     if write_debug:
         write_quotes_json(records, json_path)
         write_quotes_xlsx(records, xlsx_path)
+        write_extraction_failures_json(failures, failures_path)
 
     if args.output_mode in {"postgres", "both"}:
         from .pg_store import PostgresQuoteStore
@@ -148,17 +157,21 @@ def main() -> None:
             paragraphs=paragraphs,
             quote_lines=quote_lines,
             records=records,
+            failures=failures,
             splitter_model=splitter_model,
             extractor_model=extractor.model,
             metadata={"stage": args.stage},
         )
         print(f"postgres_run_id={store_result.run_id}")
         print(f"postgres_quotes={store_result.quote_count}")
+        print(f"postgres_failures={store_result.failure_count}")
 
     print(f"quotes={len(records)}")
+    print(f"extraction_failures={len(failures)}")
     if write_debug:
         print(f"json={json_path}")
         print(f"xlsx={xlsx_path}")
+        print(f"failures_json={failures_path}")
 
 
 def _read_quote_lines(path: Path):

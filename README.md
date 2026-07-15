@@ -39,6 +39,7 @@ Use `--output-mode debug` to skip PostgreSQL and write only:
 
 - `output/quotes.json`
 - `output/quotes.xlsx`
+- `output/extraction_failures.json`
 - `output/paragraphs.json`
 - `output/quote_lines.json`
 - `output/quote_lines.txt`
@@ -68,7 +69,7 @@ python -m ficc_bbg_parser.cli \
   --batch-size 10
 ```
 
-The extractor groups quote lines by paragraph and includes the first five lines of that paragraph once as auxiliary context in each LLM request. Paragraphs larger than `--batch-size` are split into multiple requests. The extractor shows batch progress by default. Disable it with `--no-progress`.
+The extractor groups quote lines by paragraph and includes the first five lines of that paragraph once as auxiliary context in each LLM request. Paragraphs larger than `--batch-size` are split into multiple requests. Each batch gets three attempts by default. If all attempts fail because of request, response, JSON, or payload errors, the affected quote lines are recorded and skipped while later batches continue. The extractor shows quote and failure progress by default. Disable it with `--no-progress`.
 
 ## Production SQL Server Input
 
@@ -171,7 +172,7 @@ docker exec -e PGPASSWORD=replace-with-app-password pg_local \
   -c "\dt ficc.*"
 ```
 
-The expected tables are `ingestion_run`, `chat_email`, `chat_paragraph`, `quote_line`, `bond_security`, `bond_quote`, and `schema_migration` in the `ficc` schema. Use strong administrator and application passwords outside local development.
+The expected tables are `ingestion_run`, `chat_email`, `chat_paragraph`, `quote_line`, `bond_security`, `bond_quote`, `quote_extraction_failure`, and `schema_migration` in the `ficc` schema. Use strong administrator and application passwords outside local development.
 
 The PostgreSQL schema follows the parser stages:
 
@@ -180,14 +181,15 @@ ingestion_run
   -> chat_email
   -> chat_paragraph
   -> quote_line
-  -> bond_quote
+       -> bond_quote
+       -> quote_extraction_failure
 ```
 
 `bond_security` stores enriched security-master data separately. `bond_quote` keeps typed query columns and the complete extractor result in `raw_payload JSONB`. Partial maturities such as `2031` and `2031-06` are stored using `maturity_text` and `maturity_precision`; `maturity_date` is used only when a full date is known.
 
 Migrations are versioned and safe to run repeatedly. A source email is unique within an ingestion run, while `quote_sequence` allows defensive storage of more than one extracted quote from a malformed source line.
 
-Each CLI write is transactional. If any paragraph, quote line, or quote insert fails, the complete run is rolled back. Successful output prints the PostgreSQL `run_id` and inserted quote count.
+Each CLI write is transactional. If any database insert fails, the complete run is rolled back. Exhausted LLM retries do not stop the run: successful records go to `bond_quote`, while failed quote lines go to `quote_extraction_failure`. Successful output prints the PostgreSQL `run_id`, inserted quote count, and extraction failure count.
 
 Check recent runs and quotes:
 
@@ -201,6 +203,13 @@ SELECT ticker, maturity_text, bid_price, ask_price,
        bid_spread, ask_spread, quote_time, quote_source
 FROM ficc.bond_quote
 ORDER BY quote_time DESC
+LIMIT 50;
+
+SELECT f.failure_id, f.model, f.attempts, f.error_type,
+       f.error_message, l.line_id, l.text
+FROM ficc.quote_extraction_failure f
+JOIN ficc.quote_line l ON l.quote_line_pk = f.quote_line_pk
+ORDER BY f.created_at DESC
 LIMIT 50;
 ```
 
@@ -237,9 +246,9 @@ Useful tuning flags:
 3. The classifier labels each message as `quote`, `axes`, `primary`, `stats`, `commentary`, or `noise`, and returns quote line ranges.
 4. Local code slices the original text by line range into `quote_lines`, one bond quote per line.
 5. The extractor groups quote lines by paragraph and receives the paragraph's first five lines once as auxiliary context plus the target quote lines.
-6. The extractor returns one structured record per quote.
-7. Store the complete source chain and typed quote fields in PostgreSQL in one transaction.
-8. Optionally export JSON/XLSX and intermediate files in `debug` or `both` mode.
+6. The extractor returns structured quotes and records lines skipped after exhausted retries.
+7. Store successful quotes and extraction failures with the complete source chain in one PostgreSQL transaction.
+8. Optionally export JSON/XLSX, extraction failures, and intermediate files in `debug` or `both` mode.
 
 ## Notes
 

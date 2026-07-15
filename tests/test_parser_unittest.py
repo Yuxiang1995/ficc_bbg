@@ -1,5 +1,6 @@
 import unittest
 import json
+from unittest.mock import patch
 
 from ficc_bbg_parser.models import ParagraphBlock, QuoteLine, QuoteRecord
 from ficc_bbg_parser.pipeline import parse_chat_text
@@ -188,6 +189,37 @@ class ParserTest(unittest.TestCase):
             {"line_no": 1, "line_id": "line_00001", "text": quote_line.text}
         ])
 
+    def test_llm_extractor_records_failed_lines_after_three_attempts(self):
+        try:
+            from ficc_bbg_parser.llm_extractor import OpenAIQuoteExtractor
+        except ImportError as exc:
+            self.skipTest(f"OpenAI dependency is not installed: {exc}")
+
+        client = SelectiveFailingExtractorClient()
+        quote_lines = [
+            QuoteLine("line_00001", "para_00001", "FAIL 1 2030 100/101"),
+            QuoteLine("line_00002", "para_00002", "GOOD 2 2031 99/100"),
+        ]
+        extractor = OpenAIQuoteExtractor(
+            client=client,
+            batch_size=1,
+            max_workers=1,
+            max_retries=2,
+            show_progress=False,
+        )
+
+        with patch("ficc_bbg_parser.llm_extractor.time.sleep"):
+            records = extractor.extract(quote_lines)
+
+        self.assertEqual([record.ticker for record in records], ["GOOD"])
+        self.assertEqual(client.completions.failed_calls, 3)
+        self.assertEqual(len(extractor.failures), 1)
+        failure = extractor.failures[0]
+        self.assertEqual(failure.line_id, "line_00001")
+        self.assertEqual(failure.attempts, 3)
+        self.assertEqual(failure.error_type, "TimeoutError")
+        self.assertIn("simulated timeout", failure.error_message)
+
     def test_splitter_balances_message_batches_by_payload_length(self):
         try:
             from ficc_bbg_parser.llm_splitter import RawMessage, _balanced_message_batches, _batch_weight, _message_weight
@@ -356,6 +388,24 @@ class RecordingExtractorCompletions(FakeExtractorCompletions):
 class RecordingExtractorClient:
     def __init__(self):
         self.completions = RecordingExtractorCompletions()
+        self.chat = type("Chat", (), {"completions": self.completions})()
+
+
+class SelectiveFailingExtractorCompletions(FakeExtractorCompletions):
+    def __init__(self):
+        self.failed_calls = 0
+
+    def create(self, **kwargs):
+        user_payload = json.loads(kwargs["messages"][1]["content"])
+        if user_payload["quote_lines"][0]["text"].startswith("FAIL"):
+            self.failed_calls += 1
+            raise TimeoutError("simulated timeout")
+        return super().create(**kwargs)
+
+
+class SelectiveFailingExtractorClient:
+    def __init__(self):
+        self.completions = SelectiveFailingExtractorCompletions()
         self.chat = type("Chat", (), {"completions": self.completions})()
 
 

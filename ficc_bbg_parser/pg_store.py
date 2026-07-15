@@ -5,7 +5,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional
 from zoneinfo import ZoneInfo
 
 from . import settings
-from .models import ParagraphBlock, QuoteLine, QuoteRecord
+from .models import ExtractionFailure, ParagraphBlock, QuoteLine, QuoteRecord
 
 
 HK_TZ = ZoneInfo("Asia/Hong_Kong")
@@ -18,6 +18,7 @@ class StoreResult:
     paragraph_count: int
     quote_line_count: int
     quote_count: int
+    failure_count: int
 
 
 class PostgresQuoteStore:
@@ -32,12 +33,14 @@ class PostgresQuoteStore:
         paragraphs: List[ParagraphBlock],
         quote_lines: List[QuoteLine],
         records: List[QuoteRecord],
+        failures: Optional[List[ExtractionFailure]] = None,
         splitter_model: Optional[str] = None,
         extractor_model: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> StoreResult:
         psycopg, Jsonb = _import_psycopg()
         email_rows = list(emails)
+        failure_rows = failures or []
         effective_paragraphs = _with_missing_paragraphs(paragraphs, quote_lines)
 
         connect = self.connection_factory or psycopg.connect
@@ -87,6 +90,13 @@ class PostgresQuoteStore:
                     quote_line_ids,
                     records,
                 )
+                failure_count = _insert_failures(
+                    cursor,
+                    Jsonb,
+                    run_id,
+                    quote_line_ids,
+                    failure_rows,
+                )
                 cursor.execute(
                     """
                     UPDATE ingestion_run
@@ -95,6 +105,7 @@ class PostgresQuoteStore:
                         paragraph_count = %s,
                         quote_line_count = %s,
                         quote_count = %s,
+                        extraction_failure_count = %s,
                         completed_at = now()
                     WHERE run_id = %s
                     """,
@@ -103,6 +114,7 @@ class PostgresQuoteStore:
                         len(effective_paragraphs),
                         len(quote_lines),
                         quote_count,
+                        failure_count,
                         run_id,
                     ),
                 )
@@ -113,6 +125,7 @@ class PostgresQuoteStore:
             paragraph_count=len(effective_paragraphs),
             quote_line_count=len(quote_lines),
             quote_count=quote_count,
+            failure_count=failure_count,
         )
 
 
@@ -378,6 +391,46 @@ def _insert_quotes(
         )
         inserted_count += cursor.rowcount
 
+    return inserted_count
+
+
+def _insert_failures(
+    cursor,
+    Jsonb,
+    run_id: int,
+    quote_line_ids: Dict[str, int],
+    failures: List[ExtractionFailure],
+) -> int:
+    inserted_count = 0
+    for failure in failures:
+        quote_line_pk = quote_line_ids.get(failure.line_id)
+        if quote_line_pk is None:
+            raise ValueError(f"Cannot match extraction failure to quote line {failure.line_id}")
+        cursor.execute(
+            """
+            INSERT INTO quote_extraction_failure (
+                run_id, quote_line_pk, model, attempts, error_type,
+                error_message, failure_payload
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (run_id, quote_line_pk) DO UPDATE
+            SET model = EXCLUDED.model,
+                attempts = EXCLUDED.attempts,
+                error_type = EXCLUDED.error_type,
+                error_message = EXCLUDED.error_message,
+                failure_payload = EXCLUDED.failure_payload,
+                created_at = now()
+            """,
+            (
+                run_id,
+                quote_line_pk,
+                failure.model,
+                failure.attempts,
+                failure.error_type,
+                failure.error_message,
+                Jsonb(failure.to_dict()),
+            ),
+        )
+        inserted_count += cursor.rowcount
     return inserted_count
 
 

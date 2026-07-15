@@ -6,12 +6,21 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from .models import EXPORT_COLUMNS, ParagraphBlock, QuoteLine, QuoteRecord
+from .models import ExtractionFailure, EXPORT_COLUMNS, ParagraphBlock, QuoteLine, QuoteRecord
 
 
 def write_quotes_json(records: Iterable[QuoteRecord], output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     payload = [record.to_dict() for record in records]
+    output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def write_extraction_failures_json(
+    failures: Iterable[ExtractionFailure],
+    output_path: Path,
+) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = [failure.to_dict() for failure in failures]
     output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
