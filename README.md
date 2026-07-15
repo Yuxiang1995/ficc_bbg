@@ -102,6 +102,77 @@ WHERE RECEIVE_DATE >= @date AND RECEIVE_DATE < DATEADD(day, 1, @date)
 
 ## PostgreSQL Quote Store
 
+### Fresh Environment Bootstrap
+
+`pg_schema.py` creates and upgrades schemas, tables, indexes, and constraints. The PostgreSQL server, application role, and database must exist before running it.
+
+For a new local Docker environment, create and start PostgreSQL 16:
+
+```bash
+docker run -d \
+  --name pg_local \
+  -e POSTGRES_PASSWORD=replace-with-admin-password \
+  -p 5432:5432 \
+  postgres:16
+```
+
+If the container already exists but is stopped:
+
+```bash
+docker start pg_local
+```
+
+Create the application login and database once, using the PostgreSQL administrator:
+
+```bash
+docker exec pg_local \
+  psql -U postgres -d postgres \
+  -c "CREATE ROLE ficc_app LOGIN PASSWORD 'replace-with-app-password';"
+
+docker exec pg_local \
+  psql -U postgres -d postgres \
+  -c "CREATE DATABASE ficc_bbg OWNER ficc_app;"
+```
+
+If `ficc_app` already exists and only its password needs to be changed:
+
+```bash
+docker exec pg_local \
+  psql -U postgres -d postgres \
+  -c "ALTER ROLE ficc_app PASSWORD 'replace-with-app-password';"
+```
+
+Configure the same application credentials in `.env`:
+
+```dotenv
+POSTGRES_HOST=127.0.0.1
+POSTGRES_PORT=5432
+POSTGRES_DATABASE=ficc_bbg
+POSTGRES_SCHEMA=ficc
+POSTGRES_USERNAME=ficc_app
+POSTGRES_PASSWORD=replace-with-app-password
+POSTGRES_SSLMODE=disable
+```
+
+Install dependencies and apply all migrations:
+
+```bash
+pip install -r requirements.txt
+python -m ficc_bbg_parser.pg_schema
+```
+
+On a fresh database, the migration output should include the SQL files that were applied. Later runs are safe and should report `migrations=none` when the schema is current.
+
+Verify the tables:
+
+```bash
+docker exec -e PGPASSWORD=replace-with-app-password pg_local \
+  psql -h 127.0.0.1 -U ficc_app -d ficc_bbg \
+  -c "\dt ficc.*"
+```
+
+The expected tables are `ingestion_run`, `chat_email`, `chat_paragraph`, `quote_line`, `bond_security`, `bond_quote`, and `schema_migration` in the `ficc` schema. Use strong administrator and application passwords outside local development.
+
 The PostgreSQL schema follows the parser stages:
 
 ```text
