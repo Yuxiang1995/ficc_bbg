@@ -16,6 +16,10 @@ env/
 
 output/
 
+front/node_modules/
+front/dist/
+front/*.tsbuildinfo
+
 .DS_Store
 
 test_*
