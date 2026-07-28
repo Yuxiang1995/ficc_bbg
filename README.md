@@ -233,6 +233,19 @@ sudo systemctl restart ficc-bbg
 
 If Node.js cannot be installed on the production server, run `npm ci && npm run build` in CI or on a build machine using the same Git commit, then deploy `front/dist` as a build artifact. `dist` is still not committed to Git.
 
+## Evaluation Dataset
+
+Evaluation sampling code and generated annotation files live in `eval/`. The initial 100-sample set uses a deterministic seed and the requested `30/30/20/10/10` selection quotas:
+
+```bash
+python -m eval.build_eval_set \
+  --output eval/eval_dataset.json \
+  --seed 20260728 \
+  --shortfall-policy backfill
+```
+
+Use `--shortfall-policy strict` when every difficulty bucket must be satisfied without replacement. Backfill mode retains each sample's real difficulty and records all quota substitutions in the JSON metadata. See `eval/README.md` for field definitions, manual annotation instructions, and tests.
+
 ## Step-by-step Debugging
 
 Run only the splitter from a debug txt file:

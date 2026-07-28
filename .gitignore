@@ -23,3 +23,5 @@ front/*.tsbuildinfo
 .DS_Store
 
 test_*
+
+eval/*.json
