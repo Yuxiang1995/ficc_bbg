@@ -31,3 +31,6 @@ POSTGRES_SCHEMA = os.getenv("POSTGRES_SCHEMA", "ficc")
 POSTGRES_USERNAME = os.getenv("POSTGRES_USERNAME", "ficc_app")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "")
 POSTGRES_SSLMODE = os.getenv("POSTGRES_SSLMODE", "prefer")
+
+EVAL_DATASET_PATH = os.getenv("EVAL_DATASET_PATH", "eval/eval_dataset.json")
+EVAL_ANNOTATED_PATH = os.getenv("EVAL_ANNOTATED_PATH", "eval/eval_annotated.json")

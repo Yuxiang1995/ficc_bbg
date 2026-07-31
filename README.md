@@ -58,7 +58,7 @@ Use `--output-mode both` to write PostgreSQL and all debug files.
 
 ## Bond Quote Console
 
-The read-only web console uses React, TypeScript, Ant Design Pro, and ProTable. It provides server-side pagination, filtering, and sorting for `ficc.bond_quote`, plus a separate extraction-failure view. PostgreSQL credentials remain in the Python API and are never exposed to the browser.
+The web console uses React, TypeScript, Ant Design Pro, and ProTable. It provides server-side pagination, filtering, and sorting for `ficc.bond_quote`, a separate extraction-failure view, and a JSON-backed evaluation annotation workspace. PostgreSQL credentials remain in the Python API and are never exposed to the browser.
 
 Start the API from the project root:
 
@@ -79,6 +79,22 @@ npm run dev
 Open `http://127.0.0.1:5173/`. Vite proxies `/api` requests to `http://127.0.0.1:8000`, so no browser-side database configuration is required. FastAPI documentation is available at `http://127.0.0.1:8000/docs`.
 
 The quote page supports keyword, ISIN, date range, currency, quote type, bond type, source, and parse-status filters. Click the eye button or double-click a row to inspect the complete quote, source paragraph, model metadata, and raw LLM payload. The extraction-failure page shows quote lines that were skipped after all retry attempts.
+
+The evaluation annotation page is available at
+`http://127.0.0.1:5173/#/annotation` in development or
+`http://127.0.0.1:8000/#/annotation` after `front/dist` has been built.
+It reads the source dataset and creates a separate working JSON on first save:
+
+```dotenv
+EVAL_DATASET_PATH=eval/eval_dataset.json
+EVAL_ANNOTATED_PATH=eval/eval_annotated.json
+```
+
+Each save uses an atomic file replacement. The source evaluation dataset is
+never modified. The page supports sample search/status filters, paragraph
+context, current-prediction comparison, field availability, editable Gold
+values, draft saves, completed-state validation, progress tracking, and JSON
+download.
 
 ### Frontend Directory and Git
 
@@ -245,6 +261,27 @@ python -m eval.build_eval_set \
 ```
 
 Use `--shortfall-policy strict` when every difficulty bucket must be satisfied without replacement. Backfill mode retains each sample's real difficulty and records all quota substitutions in the JSON metadata. See `eval/README.md` for field definitions, manual annotation instructions, and tests.
+
+Complete annotations in the web console, which generates
+`eval/eval_annotated.json`. Then run the current extractor into a separate
+prediction file:
+
+```bash
+python -m eval.run_inference \
+  --input eval/eval_annotated.json \
+  --output eval/eval_inference.json \
+  --batch-size 10 \
+  --workers 4
+```
+
+Then score those predictions against the preserved gold fields:
+
+```bash
+python -m eval.score_eval \
+  --input eval/eval_inference.json \
+  --output eval/eval_report.json \
+  --strict-annotations
+```
 
 ## Step-by-step Debugging
 

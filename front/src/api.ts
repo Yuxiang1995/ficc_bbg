@@ -1,5 +1,8 @@
 import type {
   BondQuote,
+  EvaluationAnnotation,
+  EvaluationDatasetResponse,
+  EvaluationSaveResponse,
   ExtractionFailure,
   FilterOptions,
   PageResult,
@@ -31,3 +34,30 @@ export const getQuote = (quoteId: number) =>
   request<BondQuote>(`/api/bond-quotes/${quoteId}`);
 export const getFailures = (params: Record<string, QueryValue>) =>
   request<PageResult<ExtractionFailure>>('/api/extraction-failures', params);
+
+export const getEvaluationDataset = () =>
+  request<EvaluationDatasetResponse>('/api/evaluation');
+
+export async function saveEvaluationAnnotation(
+  sampleId: string,
+  annotation: EvaluationAnnotation,
+): Promise<EvaluationSaveResponse> {
+  const response = await fetch(
+    `/api/evaluation/samples/${encodeURIComponent(sampleId)}/annotation`,
+    {
+      method: 'PUT',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(annotation),
+    },
+  );
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new Error(payload?.detail ?? `Request failed: ${response.status}`);
+  }
+  return response.json() as Promise<EvaluationSaveResponse>;
+}
+
+export const evaluationDownloadUrl = '/api/evaluation/download';

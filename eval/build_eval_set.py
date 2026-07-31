@@ -11,16 +11,11 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Set, Tuple
 
 from ficc_bbg_parser import settings
-
-
-CRITICAL_FIELDS = (
-    "ticker",
-    "issuer",
-    "currency",
-    "maturity_date",
-    "coupon_type",
-    "coupon_rate",
+from ficc_bbg_parser.eval_store import (
+    CRITICAL_FIELDS,
+    EVALUATION_SCHEMA_VERSION,
 )
+
 
 REQUESTED_DISTRIBUTION = {
     "easy": 30,
@@ -284,13 +279,18 @@ def build_eval_dataset(
     )
 
     return {
-        "schema_version": "1.0",
+        "schema_version": EVALUATION_SCHEMA_VERSION,
         "dataset_name": "ficc_quote_extraction_initial_screening",
         "metadata": {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "seed": seed,
             "shortfall_policy": shortfall_policy,
             "critical_fields": list(CRITICAL_FIELDS),
+            "critical_field_count": len(CRITICAL_FIELDS),
+            "issuer_evaluation_policy": (
+                "issuer is optional metadata and is excluded from "
+                "extraction accuracy"
+            ),
             "maturity_presence_rule": (
                 "maturity_date is present when either bond_quote.maturity_date "
                 "or bond_quote.maturity_text is populated"

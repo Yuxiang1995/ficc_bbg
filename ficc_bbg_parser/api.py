@@ -2,23 +2,25 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import settings
+from .eval_store import EvaluationDatasetStore
 
 
 app = FastAPI(
     title="FICC Bond Quote API",
-    description="Read-only query API for parsed Bloomberg bond quotes.",
+    description="Query API for bond quotes and local evaluation annotation.",
     version="1.0.0",
 )
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
     allow_credentials=True,
-    allow_methods=["GET"],
+    allow_methods=["GET", "PUT"],
     allow_headers=["*"],
 )
 
@@ -273,6 +275,42 @@ def list_extraction_failures(
     return {"data": rows, "total": total, "page": page, "page_size": page_size}
 
 
+@app.get("/api/evaluation")
+def get_evaluation_dataset() -> Dict[str, Any]:
+    try:
+        return _evaluation_store().load()
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.put("/api/evaluation/samples/{sample_id}/annotation")
+def save_evaluation_annotation(
+    sample_id: str,
+    annotation: Dict[str, Any] = Body(...),
+) -> Dict[str, Any]:
+    try:
+        return _evaluation_store().save_annotation(sample_id, annotation)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/evaluation/download")
+def download_evaluation_dataset() -> FileResponse:
+    try:
+        active_path = _evaluation_store().active_path()
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return FileResponse(
+        path=str(active_path),
+        media_type="application/json",
+        filename="eval_annotated.json",
+    )
+
+
 def _quote_filters(
     q: Optional[str],
     ticker: Optional[str],
@@ -402,6 +440,13 @@ def _import_psycopg() -> Any:
     except ImportError as exc:
         raise ImportError("psycopg is required. Install requirements.txt.") from exc
     return psycopg
+
+
+def _evaluation_store() -> EvaluationDatasetStore:
+    return EvaluationDatasetStore(
+        input_path=Path(settings.EVAL_DATASET_PATH),
+        output_path=Path(settings.EVAL_ANNOTATED_PATH),
+    )
 
 
 FRONT_DIST = Path(__file__).resolve().parents[1] / "front" / "dist"

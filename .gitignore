@@ -25,3 +25,4 @@ front/*.tsbuildinfo
 test_*
 
 eval/*.json
+!eval/test_*.py

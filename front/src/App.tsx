@@ -1,13 +1,18 @@
-import { AlertOutlined, DatabaseOutlined, LineChartOutlined } from '@ant-design/icons';
+import { AlertOutlined, DatabaseOutlined, FormOutlined, LineChartOutlined } from '@ant-design/icons';
 import { ProLayout } from '@ant-design/pro-components';
 import { Badge, Space, Typography } from 'antd';
 import { useEffect, useState } from 'react';
 import FailuresPage from './pages/FailuresPage';
+import AnnotationPage from './pages/AnnotationPage';
 import QuotesPage from './pages/QuotesPage';
 
-type ViewKey = '/quotes' | '/failures';
+type ViewKey = '/quotes' | '/failures' | '/annotation';
 
-const currentView = (): ViewKey => window.location.hash === '#/failures' ? '/failures' : '/quotes';
+const currentView = (): ViewKey => {
+  if (window.location.hash === '#/failures') return '/failures';
+  if (window.location.hash === '#/annotation') return '/annotation';
+  return '/quotes';
+};
 
 export default function App() {
   const [view, setView] = useState<ViewKey>(currentView());
@@ -38,6 +43,7 @@ export default function App() {
         routes: [
           { path: '/quotes', name: '债券报价', icon: <DatabaseOutlined /> },
           { path: '/failures', name: '抽取失败', icon: <AlertOutlined /> },
+          { path: '/annotation', name: '评测标注', icon: <FormOutlined /> },
         ],
       }}
       menuItemRender={(item, dom) => (
@@ -58,7 +64,9 @@ export default function App() {
       }}
       contentStyle={{ padding: 0 }}
     >
-      {view === '/failures' ? <FailuresPage /> : <QuotesPage />}
+      {view === '/failures' && <FailuresPage />}
+      {view === '/annotation' && <AnnotationPage />}
+      {view === '/quotes' && <QuotesPage />}
     </ProLayout>
   );
 }

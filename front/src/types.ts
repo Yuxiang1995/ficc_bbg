@@ -88,3 +88,101 @@ export interface PageResult<T> {
   page: number;
   page_size: number;
 }
+
+export type CriticalField =
+  | 'ticker'
+  | 'currency'
+  | 'maturity_date'
+  | 'coupon_type'
+  | 'coupon_rate';
+
+export type FieldAvailability =
+  | 'pending'
+  | 'present'
+  | 'inferable'
+  | 'absent'
+  | 'ambiguous';
+
+export type GoldValue = string | number | null;
+
+export interface EvaluationAnnotation {
+  status: 'pending' | 'completed';
+  difficulty_gold:
+    | 'easy'
+    | 'hard_extraction'
+    | 'hard_context'
+    | 'unanswerable'
+    | 'ambiguous'
+    | null;
+  field_availability: Record<CriticalField, FieldAvailability>;
+  gold: Record<CriticalField, GoldValue>;
+  annotator: string | null;
+  remark: string | null;
+}
+
+export interface EvaluationPrediction {
+  ticker?: string | null;
+  issuer?: string | null;
+  currency?: string | null;
+  maturity_date?: string | null;
+  coupon_type?: string | null;
+  coupon_rate?: NumericValue;
+  [key: string]: unknown;
+}
+
+export interface EvaluationSample {
+  sample_id: string;
+  selection_bucket: string;
+  selection_reason: string;
+  difficulty_candidate: string;
+  missing_fields_current: CriticalField[];
+  missing_field_count: number;
+  special_format_reasons: string[];
+  source: {
+    run_id: number | null;
+    paragraph_id: string | null;
+    quote_time: string | null;
+    quote_source: string | null;
+    speaker: string | null;
+    source_date: string | null;
+    [key: string]: unknown;
+  };
+  input: {
+    quote_line: string;
+    paragraph_context: string;
+    paragraph_context_line_limit: number;
+    paragraph_line_count: number;
+  };
+  prediction_snapshot: EvaluationPrediction[];
+  extraction_failure: Record<string, unknown> | null;
+  annotation: EvaluationAnnotation;
+  inference_status?: string;
+  inference_failure?: Record<string, unknown>[] | null;
+}
+
+export interface EvaluationDataset {
+  schema_version?: string;
+  dataset_name?: string;
+  metadata: Record<string, unknown>;
+  samples: EvaluationSample[];
+}
+
+export interface AnnotationProgress {
+  total: number;
+  completed: number;
+  pending: number;
+}
+
+export interface EvaluationDatasetResponse {
+  dataset: EvaluationDataset;
+  source_file: string;
+  working_file: string;
+  loaded_from: 'source' | 'working';
+  progress: AnnotationProgress;
+}
+
+export interface EvaluationSaveResponse {
+  sample: EvaluationSample;
+  working_file: string;
+  progress: AnnotationProgress;
+}
