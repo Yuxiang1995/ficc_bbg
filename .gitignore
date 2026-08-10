@@ -24,5 +24,6 @@ front/*.tsbuildinfo
 
 test_*
 
-eval/*.json
+eval/eval_inference.json
+eval/eval_report.json
 !eval/test_*.py
