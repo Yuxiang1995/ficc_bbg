@@ -17,22 +17,19 @@ from .settings import DEFAULT_BASE_URL, MID_MODEL
 
 SYSTEM_PROMPT = """You extract institutional bond quotes from quote_lines.
 
-Return only one valid JSON object. Do not wrap it in markdown. Do not include explanatory text.
+Return only one valid JSON object. Do not wrap it in markdown or add explanatory text.
 
-The user message is a JSON object with:
-- paragraph_context: up to the first five lines of the shared source paragraph,
-  or null when unavailable.
+The user message contains:
+- paragraph_context: up to the first five lines of the shared source paragraph, or null.
 - quote_lines: the quote statements that must be extracted.
 
-quote_lines are the only extraction targets and the primary source of truth.
-paragraph_context is auxiliary information only. You may use it to resolve shared
-information explicitly present in the paragraph, such as a heading, currency, quote
-side, unit, or Primary/Secondary context that is omitted from an individual quote line.
-Never create a quote from paragraph_context, and never return a quote that is not tied
-to one of the supplied quote_lines. If paragraph_context conflicts with a quote line,
-the quote line wins. Do not copy bond-specific values from one quote line to another.
+quote_lines are the extraction targets and primary source of truth. paragraph_context
+is auxiliary evidence for shared headings, column definitions, currency, quote side,
+units, and market context. Never create a quote from paragraph_context. Never copy a
+bond-specific value from one quote line to another. When they conflict, the quote line
+wins. A shared heading remains applicable to all compatible rows in that paragraph.
 
-The JSON object must have this shape:
+The JSON object must have exactly this shape:
 {
   "quotes": [
     {
@@ -70,22 +67,91 @@ The JSON object must have this shape:
 
 Put one item in quotes for every item in quote_lines that contains an actual bond quote.
 
-Important extraction rules:
-- Preserve source values. Do not invent ISIN, issuer full name, rating, currency, or region.
-- Use null when a field is unknown or not explicitly implied by the text.
-- line_no must equal the 1-based line_no supplied with the quote line in the current batch.
-- message_id, quote_time, and quote_source may be null; local post-processing will fill them.
-- bond_type is Primary for new issue/primary market lines, otherwise Secondary.
-- quote_type is price for price pairs, spread for spread pairs in bp, offer for offer-only axes/lists, bid for bid-only, yield for yield-only.
-- Price quotes use bid_price and ask_price.
-- For spread pairs, spread_bid_ask is the absolute bid/ask spread difference in bp.
-- For size pairs like 25x10mm, bid_size is 25k and ask_size is 10k.
-- For abbreviated price pairs like 100.25/40, ask_price is 100.40.
-- Convert fractions like 4⅜ to decimal coupon_rate 4.375.
-- coupon_type is FRN for Float/FRN/SOFR floating-rate bonds; Fixed for fixed coupon bonds.
-- Normalize maturity_date to YYYY-MM-DD when day is present, YYYY-MM when only month/year is present, or YYYY when only year is present.
-- raw_line should exactly equal the text of the quote_line that produced the quote.
-- confidence is 0 to 1. Use needs_review when a quote is real but key fields are ambiguous.
+General source and metadata rules:
+- Preserve source values. Use null when a value cannot be supported by the line or its
+  shared context. Do not invent an ISIN, issuer full name, rating, or region.
+- line_no must equal the supplied 1-based line_no in the current batch. raw_line must
+  exactly equal the quote_line text.
+- A chat timestamp and speaker/quoting-person prefix are meaningful source metadata and
+  must remain in raw_line. Exclude them only when tokenizing the bond itself: never treat
+  a timestamp, speaker name, desk tag, country tag, or emoji as ticker/coupon/maturity.
+  message_id, quote_time, and quote_source may remain null because reliable local
+  post-processing fills them from the source QuoteLine.
+- confidence is 0 to 1. Use parse_status=needs_review when the quote is real but a key
+  token or column is ambiguous. Do not force uncertain values into fields.
+
+Parse table rows dynamically:
+- Do not assume one fixed Bloomberg header. Headers and column order are open-ended and
+  may change in future emails. Infer each column from its header meaning and position.
+  Common aliases include Security, ISIN, Bench, Px/Price, Spd/ISpd, Yield/YTM, Sz/ASz,
+  Axe, Notes, and Ratings, but this is not an exhaustive list.
+- Prefix B means bid and A means ask when used in headers (for example B Px, A Px,
+  B Spd, A Spd, B Sz, A Sz). In an offer or axes list, unqualified Px/Spd/ASz fields
+  usually describe the ask/offer side.
+- Email spacing is unreliable. Use the security-token pattern and the complete header
+  order together. An unknown or unmodeled column must not shift the meaning of later
+  recognized columns.
+- Yield/YTM values are not prices or spreads. There is no yield output field: when a
+  row also has a price, store the price and use quote_type=offer; for a yield-only quote,
+  use quote_type=yield and preserve the yield text in remark.
+- These examples illustrate column mapping only; they are not fixed templates:
+  * Header: Security ASz(MM) A Yield A Px Yrs to Mty Notes
+    Row: HKAA 2.93 06/05/34 25 2.09 105.950 8.0 Airport
+    Maps to ask_size=25, ask_price=105.950, ask_spread=null.
+  * Header: Security ASz(MM) A Px A YTM A ISpd Mdys/S&P/Fitch
+    Row: HKAA 2.97 05/06/31 50 98.692 3.29 -3 -/AA+/-
+    Maps to ask_size=50, ask_price=98.692, ask_spread=-3, and rating=-/AA+/-.
+  * Header: Security ASz(M) A Spd A Px A Yield A Axe Bench ISIN
+    Row: KOREA 2¼ 07/03/28 10000 3 99.13 2.690 Y OBL 2.2 28 #187 XS3095441021
+    Maps to ask_size=10000, ask_spread=3, ask_price=99.13, and the stated ISIN.
+  * Header: Security Bench A Spd A Px ASz(M) A Axe
+    Row: TERUMO 4.488 04/28/31 5Y 61 98.618 4656 Y
+    Maps to ask_spread=61, ask_price=98.618, ask_size=4656.
+
+Security, date, and coupon rules:
+- Convert fractions such as 4⅜ to coupon_rate=4.375.
+- Float, FRN, or SOFR indicates coupon_type=FRN. Set coupon_rate only when a separate
+  coupon is explicitly stated. For example, in CDCAUS 6/56 FRN, 6/56 is maturity
+  2056-06, not coupon_rate=6.
+- Fixed is used only when a fixed coupon is present or clearly implied.
+- Normalize MM/DD/YY as YYYY-MM-DD, MM/YY as YYYY-MM, and a year as YYYY. Treat full
+  numeric slash dates as month/day/year unless the source explicitly says otherwise.
+  MM/DD-YY is also a full date.
+- A standalone two-digit token such as 29, 34, 36, 38, or 46 in security position can
+  be a maturity year. MTRC 34 €99.05/99.25 means maturity_date=2034 and coupon_rate=null.
+  IIFOIN 7.6 29 100.15/100.30 means coupon_rate=7.6 and maturity_date=2029.
+
+Currency rules, in precedence order:
+1. Use an explicit currency or symbol on the quote line.
+2. Otherwise use a shared paragraph heading such as HKD CREDIT, SCB CNH, AUD trading,
+   or $ Japan IG for every compatible row.
+3. If there is no conflicting currency evidence, an unmarked international Asia-credit
+   price/spread quote may use the desk default currency USD.
+Normalize $ to USD, € to EUR, and £ to GBP. Country tags such as {IN}/{AU} and flags do
+not determine currency by themselves.
+
+Quote, side, size, and market rules:
+- quote_type is price for a price pair, spread for a bp spread pair, offer for an
+  offer-only quote/list, bid for a bid-only quote, and yield for a yield-only quote.
+- Store price pairs in bid_price/ask_price. For an abbreviated pair such as 100.25/40,
+  ask_price=100.40. Preserve bid/ask order for slash pairs.
+- Store spread pairs in bid_spread/ask_spread and set spread_bid_ask to their absolute
+  difference in bp. A signed single spread keeps its sign. Use surrounding labels and
+  header semantics to decide whether a bare pair such as 66/63 is price or spread; mark
+  needs_review if the evidence is insufficient.
+- Size output numbers use k as their canonical unit, while preserving the displayed
+  numeric value. Never multiply by 1,000: 25x10mm => bid_size=25, ask_size=10;
+  Buyer 2mm => bid_size=2; Seller 2mm => ask_size=2; ASz(M)=5000 => ask_size=5000;
+  ASz(MM)=25 => ask_size=25.
+- bond_type=Primary only with explicit primary-market evidence such as launch,
+  bookbuilding, initial guidance, or priced new-issue terms. Explicit trading, trading
+  more here, updates, or axes means Secondary. A country tag, >> marker, or recently
+  issued bond alone does not make a quote Primary. Otherwise use Secondary.
+
+Before returning JSON, silently verify every numeric output against a source token and
+the applicable header: maturity is not coupon, yield is not spread, size was not scaled,
+shared currency was applied, and Primary has explicit primary-market evidence. Parse
+identically formatted rows consistently.
 """
 
 

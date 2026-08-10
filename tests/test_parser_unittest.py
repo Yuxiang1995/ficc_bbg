@@ -73,6 +73,24 @@ class FakeLLMExtractor:
 
 
 class ParserTest(unittest.TestCase):
+    def test_llm_extractor_prompt_preserves_market_conventions(self):
+        from ficc_bbg_parser.llm_extractor import SYSTEM_PROMPT
+
+        normalized_prompt = " ".join(SYSTEM_PROMPT.split())
+        required_rules = [
+            "Headers and column order are open-ended",
+            "this is not an exhaustive list",
+            "timestamp and speaker/quoting-person prefix are meaningful source metadata",
+            "25x10mm => bid_size=25, ask_size=10",
+            "Never multiply by 1,000",
+            "MTRC 34 €99.05/99.25",
+            "CDCAUS 6/56 FRN",
+            "trading more here",
+        ]
+
+        for rule in required_rules:
+            self.assertIn(rule, normalized_prompt)
+
     def test_pipeline_uses_injected_llm_splitter_and_extractor(self):
         raw = "08:40:20  TOMMY HO : IIFOIN 7.6 29 >> 100.15/100.30"
         splitter = FakeLLMSplitter()

@@ -249,9 +249,28 @@ sudo systemctl restart ficc-bbg
 
 If Node.js cannot be installed on the production server, run `npm ci && npm run build` in CI or on a build machine using the same Git commit, then deploy `front/dist` as a build artifact. `dist` is still not committed to Git.
 
-## Evaluation Dataset
+## Evaluation Workflow
 
-Evaluation sampling code and generated annotation files live in `eval/`. The initial 100-sample set uses a deterministic seed and the requested `30/30/20/10/10` selection quotas:
+Evaluation code and generated files live in `eval/`. The files have different
+roles and should be used in this order:
+
+```text
+PostgreSQL
+  -> eval/eval_dataset.json    # frozen sample snapshot; annotation source only
+  -> eval/eval_annotated.json  # reviewed Gold annotations; authoritative eval input
+  -> eval/eval_inference.json  # predictions from the current extractor
+  -> eval/eval_report.json     # metrics and field-level errors
+```
+
+### 1. Build the Frozen Sample Set
+
+`eval_dataset.json` is created when a new evaluation set is sampled from
+PostgreSQL. It preserves the original quote lines, paragraph context, source
+metadata, and prediction snapshot used during initial screening. It is not the
+Gold file and is not modified by the annotation page.
+
+The initial 100-sample set uses a deterministic seed and the requested
+`30/30/20/10/10` selection quotas:
 
 ```bash
 python -m eval.build_eval_set \
@@ -262,9 +281,24 @@ python -m eval.build_eval_set \
 
 Use `--shortfall-policy strict` when every difficulty bucket must be satisfied without replacement. Backfill mode retains each sample's real difficulty and records all quota substitutions in the JSON metadata. See `eval/README.md` for field definitions, manual annotation instructions, and tests.
 
-Complete annotations in the web console, which generates
-`eval/eval_annotated.json`. Then run the current extractor into a separate
-prediction file:
+Do not rerun this command merely to evaluate a new prompt or model. Rebuilding
+the dataset may select different samples and make existing annotations
+incompatible. Rebuild it only when intentionally creating a new evaluation-set
+version, then annotate that version separately.
+
+### 2. Create and Review Gold Annotations
+
+When `eval_annotated.json` does not exist, the annotation page initializes from
+`eval_dataset.json`. The first save creates `eval_annotated.json`; subsequent
+annotation sessions read and update that working file directly. Once reviewed,
+`eval_annotated.json` is the authoritative Gold input for evaluation, while
+`eval_dataset.json` remains the unchanged source snapshot.
+
+### 3. Run the Current Extractor
+
+Run inference from the annotated Gold file into a separate prediction file.
+Always pass `--input` and `--output` explicitly so the frozen source dataset is
+not used accidentally:
 
 ```bash
 python -m eval.run_inference \
@@ -274,7 +308,13 @@ python -m eval.run_inference \
   --workers 4
 ```
 
-Then score those predictions against the preserved gold fields:
+`run_inference` preserves every annotation and replaces only the prediction
+snapshot in `eval_inference.json`.
+
+### 4. Score the Predictions
+
+Score the newly generated predictions against the Gold annotations carried
+forward into `eval_inference.json`:
 
 ```bash
 python -m eval.score_eval \
@@ -282,6 +322,11 @@ python -m eval.score_eval \
   --output eval/eval_report.json \
   --strict-annotations
 ```
+
+Do not score `eval_dataset.json` after annotation has started: it contains the
+initial empty annotation fields rather than the reviewed Gold values. Use
+`--strict-annotations` so incomplete or inconsistent completed annotations fail
+fast instead of silently reducing evaluation coverage.
 
 ## Step-by-step Debugging
 
