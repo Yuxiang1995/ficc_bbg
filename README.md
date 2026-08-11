@@ -383,6 +383,50 @@ The SQL filter is:
 WHERE RECEIVE_DATE >= @date AND RECEIVE_DATE < DATEADD(day, 1, @date)
 ```
 
+### Full PostgreSQL Rerun
+
+For development-time full reprocessing, use the range runner. It first queries
+SQL Server for dates that actually contain non-empty email content, deletes old
+`sqlserver` ingestion runs in the selected PostgreSQL date range, and then runs
+the existing full pipeline once per source date:
+
+```bash
+python -m ficc_bbg_parser.rerun_full \
+  --start-date 2026-06-01 \
+  --end-date 2026-06-30
+```
+
+The date range is inclusive. The script asks for `YES` before deleting data;
+use `--yes` for unattended development runs. By default it stops on the first
+failed date and writes progress to
+`output/full_rerun/rerun_summary.json`.
+
+Preview SQL Server dates and generated commands without changing PostgreSQL:
+
+```bash
+python -m ficc_bbg_parser.rerun_full \
+  --start-date 2026-06-01 \
+  --end-date 2026-06-30 \
+  --dry-run
+```
+
+To delete every ingestion run, including `txt` and manual debug runs, add
+`--clear-scope all`. The default `--clear-scope range` deletes only
+`source_mode=sqlserver` runs inside the selected dates.
+
+If a date fails, fix the issue and resume without deleting completed dates:
+
+```bash
+python -m ficc_bbg_parser.rerun_full \
+  --start-date 2026-06-18 \
+  --end-date 2026-06-30 \
+  --skip-clear
+```
+
+Use `--continue-on-error` to attempt later dates after a failure. Add
+`--output-mode both` to retain per-date JSON/XLSX debug files beneath
+`output/full_rerun/<date>/`; PostgreSQL-only output is the default.
+
 ## PostgreSQL Quote Store
 
 ### Fresh Environment Bootstrap

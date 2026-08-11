@@ -1,5 +1,7 @@
 import unittest
 import json
+from datetime import date
+from pathlib import Path
 from unittest.mock import patch
 
 from ficc_bbg_parser.models import ParagraphBlock, QuoteLine, QuoteRecord
@@ -73,6 +75,36 @@ class FakeLLMExtractor:
 
 
 class ParserTest(unittest.TestCase):
+    def test_full_rerun_builds_one_cli_command_per_source_date(self):
+        from ficc_bbg_parser.rerun_full import _parse_args, build_cli_command
+
+        args = _parse_args([
+            "--start-date", "2026-06-01",
+            "--end-date", "2026-06-03",
+            "--output-mode", "both",
+            "--out-root", "output/rerun-test",
+            "--extract-workers", "6",
+        ])
+
+        command = build_cli_command(args, date(2026, 6, 2))
+
+        self.assertIn("ficc_bbg_parser.cli", command)
+        self.assertEqual(command[command.index("--receive-date") + 1], "2026-06-02")
+        self.assertEqual(command[command.index("--extract-workers") + 1], "6")
+        self.assertEqual(
+            Path(command[command.index("--out-dir") + 1]),
+            Path("output/rerun-test/2026-06-02"),
+        )
+
+    def test_full_rerun_rejects_reversed_date_range(self):
+        from ficc_bbg_parser.rerun_full import _parse_args
+
+        with self.assertRaises(SystemExit):
+            _parse_args([
+                "--start-date", "2026-06-04",
+                "--end-date", "2026-06-03",
+            ])
+
     def test_llm_extractor_prompt_preserves_market_conventions(self):
         from ficc_bbg_parser.llm_extractor import SYSTEM_PROMPT
 
