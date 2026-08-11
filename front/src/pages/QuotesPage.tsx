@@ -90,6 +90,10 @@ export default function QuotesPage() {
       render: (_, row) => <Typography.Text strong>{row.ticker || '-'}</Typography.Text>,
     },
     {
+      title: '票息类型', dataIndex: 'coupon_type', width: 88, hideInSearch: true,
+      render: (_, row) => row.coupon_type || '-',
+    },
+    {
       title: '票息', dataIndex: 'coupon_rate', width: 82, align: 'right', sorter: true, hideInSearch: true,
       render: (_, row) => numberText(row.coupon_rate, 5),
     },
@@ -156,7 +160,7 @@ export default function QuotesPage() {
         rowKey="quote_id"
         columns={columns}
         cardBordered={false}
-        scroll={{ x: 1450 }}
+        scroll={{ x: 1540 }}
         search={{ labelWidth: 76, defaultCollapsed: false }}
         form={{ syncToUrl: false }}
         pagination={{ defaultPageSize: 20, showSizeChanger: true }}
