@@ -55,34 +55,33 @@ export default function QuotesPage() {
   };
 
   const columns = useMemo<ProColumns<BondQuote>[]>(() => [
-    { title: '关键字', dataIndex: 'q', hideInTable: true, fieldProps: { placeholder: 'Ticker / ISIN / 发行人' } },
-    { title: 'ISIN', dataIndex: 'isin', hideInTable: true },
+    { title: 'Keyword', dataIndex: 'q', hideInTable: true, fieldProps: { placeholder: 'Ticker / ISIN / Issuer' } },
     {
-      title: '报价日期', dataIndex: 'date_range', valueType: 'dateRange', hideInTable: true,
+      title: 'Quote Date', dataIndex: 'date_range', valueType: 'dateRange', hideInTable: true,
       fieldProps: { allowClear: true },
     },
     {
-      title: '币种', dataIndex: 'currency', hideInTable: true, valueType: 'select',
+      title: 'Currency', dataIndex: 'currency', hideInTable: true, valueType: 'select',
       valueEnum: valueEnum(options.currencies), fieldProps: { mode: 'multiple' },
     },
     {
-      title: '报价类型', dataIndex: 'quote_type', hideInTable: true, valueType: 'select',
+      title: 'Quote Type', dataIndex: 'quote_type', hideInTable: true, valueType: 'select',
       valueEnum: valueEnum(options.quote_types), fieldProps: { mode: 'multiple' },
     },
     {
-      title: '债券类型', dataIndex: 'bond_type', hideInTable: true, valueType: 'select',
+      title: 'Bond Type', dataIndex: 'bond_type', hideInTable: true, valueType: 'select',
       valueEnum: valueEnum(options.bond_types), fieldProps: { mode: 'multiple' },
     },
     {
-      title: '报价渠道', dataIndex: 'quote_source', hideInTable: true, valueType: 'select',
+      title: 'Quote Source', dataIndex: 'quote_source', hideInTable: true, valueType: 'select',
       valueEnum: valueEnum(options.quote_sources), fieldProps: { showSearch: true },
     },
     {
-      title: '解析状态', dataIndex: 'parse_status', hideInTable: true, valueType: 'select',
+      title: 'Parse Status', dataIndex: 'parse_status', hideInTable: true, valueType: 'select',
       valueEnum: valueEnum(options.parse_statuses),
     },
     {
-      title: '报价时间', dataIndex: 'quote_time', width: 158, fixed: 'left', sorter: true, hideInSearch: true,
+      title: 'Quote Time', dataIndex: 'quote_time', width: 158, fixed: 'left', sorter: true, hideInSearch: true,
       render: (_, row) => row.quote_time ? dayjs(row.quote_time).format('YYYY-MM-DD HH:mm:ss') : '-',
     },
     {
@@ -90,15 +89,19 @@ export default function QuotesPage() {
       render: (_, row) => <Typography.Text strong>{row.ticker || '-'}</Typography.Text>,
     },
     {
-      title: '票息类型', dataIndex: 'coupon_type', width: 88, hideInSearch: true,
+      title: 'Coupon Type', dataIndex: 'coupon_type', width: 100, hideInSearch: true,
       render: (_, row) => row.coupon_type || '-',
     },
     {
-      title: '票息', dataIndex: 'coupon_rate', width: 82, align: 'right', sorter: true, hideInSearch: true,
+      title: 'Coupon Rate', dataIndex: 'coupon_rate', width: 100, align: 'right', sorter: true, hideInSearch: true,
       render: (_, row) => numberText(row.coupon_rate, 5),
     },
     {
-      title: '到期日', dataIndex: 'maturity_date', width: 104, sorter: true, hideInSearch: true,
+      title: 'ISIN', dataIndex: 'isin', width: 126, ellipsis: true,
+      render: (_, row) => row.isin || '-',
+    },
+    {
+      title: 'Maturity Date', dataIndex: 'maturity_date', width: 116, sorter: true, hideInSearch: true,
       render: (_, row) => row.maturity_text || row.maturity_date || '-',
     },
     {
@@ -125,17 +128,17 @@ export default function QuotesPage() {
       title: 'Ask Size', dataIndex: 'ask_size', width: 88, align: 'right', hideInSearch: true,
       render: (_, row) => numberText(row.ask_size, 2),
     },
-    { title: '币种', dataIndex: 'currency', width: 66, hideInSearch: true },
+    { title: 'Currency', dataIndex: 'currency', width: 76, hideInSearch: true },
     {
-      title: '渠道', dataIndex: 'quote_source', width: 130, ellipsis: true, hideInSearch: true,
+      title: 'Quote Source', dataIndex: 'quote_source', width: 130, ellipsis: true, hideInSearch: true,
       render: (_, row) => row.quote_source || '-',
     },
     {
-      title: '状态', dataIndex: 'parse_status', width: 94, hideInSearch: true,
+      title: 'Parse Status', dataIndex: 'parse_status', width: 104, hideInSearch: true,
       render: (_, row) => <Tag color={row.parse_status === 'needs_review' ? 'gold' : 'green'}>{row.parse_status}</Tag>,
     },
     {
-      title: '置信度', dataIndex: 'confidence', width: 82, align: 'right', sorter: true, hideInSearch: true,
+      title: 'Confidence', dataIndex: 'confidence', width: 88, align: 'right', sorter: true, hideInSearch: true,
       render: (_, row) => numberText(row.confidence, 2),
     },
     {
@@ -160,8 +163,8 @@ export default function QuotesPage() {
         rowKey="quote_id"
         columns={columns}
         cardBordered={false}
-        scroll={{ x: 1540 }}
-        search={{ labelWidth: 76, defaultCollapsed: false }}
+        scroll={{ x: 1730 }}
+        search={{ labelWidth: 96, defaultCollapsed: false }}
         form={{ syncToUrl: false }}
         pagination={{ defaultPageSize: 20, showSizeChanger: true }}
         options={{ density: true, fullScreen: true, reload: true, setting: true }}
