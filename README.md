@@ -576,6 +576,12 @@ Useful tuning flags:
 7. Store successful quotes and extraction failures with the complete source chain in one PostgreSQL transaction.
 8. Optionally export JSON/XLSX, extraction failures, and intermediate files in `debug` or `both` mode.
 
+Source metadata keeps people and institutions separate: `speaker` is the
+Bloomberg sender/person parsed from the timestamp prefix, while `quote_source`
+is only an institution or trading desk explicitly named in the message, such
+as `SCB`, `SMBC`, or `ICBCI`. When no institution is stated, `quote_source` is
+null; it never falls back to the speaker name.
+
 ## Notes
 
 - ISIN, issuer full name, rating, currency, and region are only filled when the chat text or context provides them.

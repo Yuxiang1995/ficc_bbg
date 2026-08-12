@@ -166,6 +166,36 @@ class ParserTest(unittest.TestCase):
         self.assertEqual(len(quote_lines), 1)
         self.assertEqual(quote_lines[0].text, "08:40:20 TOMMY HO : IIFOIN 7.6 29 >> 100.15/100.30")
         self.assertEqual(quote_lines[0].quote_time, "2026-06-04 08:40:20")
+        self.assertEqual(quote_lines[0].speaker, "TOMMY HO")
+        self.assertIsNone(quote_lines[0].quote_source)
+
+    def test_splitter_keeps_institution_separate_from_speaker(self):
+        from ficc_bbg_parser.llm_splitter import RawMessage, _normalize_quote_source
+
+        message = RawMessage(
+            message_id="msg_00001",
+            message_time="09:00:00",
+            speaker="ICARUS HANYI ZHOU",
+            text="SMBC: MTRC EURO REFRESH",
+            start_line=1,
+            end_line=1,
+        )
+
+        self.assertEqual(
+            _normalize_quote_source("ICARUS HANYI ZHOU / SMBC", message),
+            "SMBC",
+        )
+        self.assertIsNone(
+            _normalize_quote_source("ICARUS HANYI ZHOU", message)
+        )
+        self.assertIsNone(_normalize_quote_source("Mizuho", message))
+
+    def test_splitter_prompt_defines_quote_source_as_institution_only(self):
+        from ficc_bbg_parser.llm_splitter import SPLIT_SYSTEM_PROMPT
+
+        normalized_prompt = " ".join(SPLIT_SYSTEM_PROMPT.split())
+        self.assertIn("Do not return the speaker as quote_source", normalized_prompt)
+        self.assertIn("If only the speaker/person is known, return quote_source=null", normalized_prompt)
 
     def test_llm_extractor_parallel_preserves_batch_order(self):
         try:

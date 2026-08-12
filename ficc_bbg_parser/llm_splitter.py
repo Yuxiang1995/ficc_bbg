@@ -35,7 +35,7 @@ Return this JSON shape:
         {"start_line": 12, "end_line": 12},
         {"start_line": 13, "end_line": 13}
       ],
-      "quote_source": "speaker/title/source or null",
+      "quote_source": "institution or trading desk name, or null",
       "confidence": 0.0
     }
   ]
@@ -48,6 +48,24 @@ Message type definitions:
 - stats: orderbook/deal stats, allocation stats, distribution stats, market statistics.
 - commentary: market color, credit comments, morning brief, macro commentary.
 - noise: chat participants, logistics, URLs, meeting details, greetings, unrelated tables such as CD/deposit runs.
+
+speaker and quote_source rules:
+- speaker is already supplied in each input message. It is the Bloomberg chat sender/person,
+  for example TOMMY HO, DAVID LI, or ICARUS HANYI ZHOU. Do not return the speaker as
+  quote_source and do not combine a person name with an institution.
+- quote_source means only the institution, bank, broker, or explicitly named trading desk
+  that supplied the quote, for example SCB, SCB Asia Credit, SMBC, ICBCI, HSBC, BOCHK,
+  or DAIWA.
+- Set quote_source only when that institution or desk is explicitly written in the message
+  text or title. Do not infer an employer from the speaker name or external knowledge.
+- A market heading such as CNH TECH REFRESH, Korea Offer Axes, or MTRC EURO REFRESH is
+  context, not quote_source, unless an institution/desk is also explicitly named.
+- If only the speaker/person is known, return quote_source=null.
+- Examples:
+  * speaker=TOMMY HO, text="SCB Asia Credit: Korea Offer Axes" => quote_source="SCB Asia Credit"
+  * speaker=DAVID LI, text="ICBCI: CNH Bonds Offer Updated" => quote_source="ICBCI"
+  * speaker=ICARUS HANYI ZHOU, text="SMBC: MTRC EURO REFRESH" => quote_source="SMBC"
+  * speaker=TOMMY HO, text="IIFOIN 7.6 29 100.15/100.30" => quote_source=null
 
 quote_line_ranges rules:
 - For quote and axes messages, identify only actual tradable quote rows or quote statements.
@@ -278,7 +296,10 @@ def _paragraphs_from_payload(
             paragraph_type=message_type,
             text=_slice_lines(lines, raw_message.start_line, raw_message.end_line),
             quote_time=raw_message.quote_time,
-            quote_source=item.get("quote_source") or _default_quote_source(raw_message),
+            quote_source=_normalize_quote_source(
+                item.get("quote_source"),
+                raw_message,
+            ),
             speaker=raw_message.speaker,
             source_date=source_date,
             confidence=float(item.get("confidence") or 0),
@@ -344,15 +365,42 @@ def _slice_lines(lines: List[str], start_line: int, end_line: int) -> str:
     return "\n".join(lines[start_line - 1 : end_line]).strip()
 
 
-def _default_quote_source(message: RawMessage) -> str:
-    title = ""
-    for line in message.text.splitlines():
-        title = line.strip().strip("* ").strip()
-        if title:
+def _normalize_quote_source(
+    value: Any,
+    message: RawMessage,
+) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+
+    candidate = " ".join(value.split()).strip(" |/:-")
+    if not candidate:
+        return None
+
+    speaker_key = _source_key(message.speaker)
+    if _source_key(candidate) == speaker_key:
+        return None
+
+    for separator in ("|", "/"):
+        parts = [part.strip(" |/:-") for part in candidate.split(separator)]
+        if any(_source_key(part) == speaker_key for part in parts):
+            candidate = " ".join(
+                part for part in parts
+                if part and _source_key(part) != speaker_key
+            ).strip()
             break
-    if title:
-        return f"{message.speaker} | {title}"
-    return message.speaker
+
+    if not candidate or _source_key(candidate) == speaker_key:
+        return None
+
+    # The institution must be visible in the source message. This prevents the
+    # model from inferring a speaker's employer or returning a generic title.
+    if _source_key(candidate) not in _source_key(message.text):
+        return None
+    return candidate
+
+
+def _source_key(value: str) -> str:
+    return re.sub(r"[^0-9a-z]+", "", value.casefold())
 
 
 def _balanced_message_batches(

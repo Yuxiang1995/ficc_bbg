@@ -75,6 +75,8 @@ General source and metadata rules:
 - A chat timestamp and speaker/quoting-person prefix are meaningful source metadata and
   must remain in raw_line. Exclude them only when tokenizing the bond itself: never treat
   a timestamp, speaker name, desk tag, country tag, or emoji as ticker/coupon/maturity.
+  speaker is the person who sent the Bloomberg message; quote_source is only an explicitly
+  named quoting institution or trading desk. Never put a person name in quote_source.
   message_id, quote_time, and quote_source may remain null because reliable local
   post-processing fills them from the source QuoteLine.
 - confidence is 0 to 1. Use parse_status=needs_review when the quote is real but a key
