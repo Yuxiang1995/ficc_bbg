@@ -122,6 +122,11 @@ Security, date, and coupon rules:
 - A standalone two-digit token such as 29, 34, 36, 38, or 46 in security position can
   be a maturity year. MTRC 34 €99.05/99.25 means maturity_date=2034 and coupon_rate=null.
   IIFOIN 7.6 29 100.15/100.30 means coupon_rate=7.6 and maturity_date=2029.
+- In a shorthand quote list, when the heading supplies one shared ticker and each row
+  starts with a two-digit maturity year followed by a colon, inherit that ticker and
+  normalize the maturity to 20YY. 2 WAY means bid and offer, BUYER means bid only, and
+  SELLER means offer only. Example: heading "SMBC: MTRC EURO REFRESH" plus row "34: ...
+  2 WAY" means ticker=MTRC, maturity_date=2034, with both bid and offer.
 
 Currency rules, in precedence order:
 1. Use an explicit currency or symbol on the quote line.
